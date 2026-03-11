@@ -62,8 +62,8 @@
 
     window._db = db;
     window._auth = auth;
+    window._signOut = () => signOut(auth);
     window._fs = { collection, doc, setDoc, onSnapshot, query, where, deleteDoc };
-    window._auth.signOut = () => signOut(auth);
     window._authFns = { createUserWithEmailAndPassword, signInWithEmailAndPassword, updateProfile };
     window._onAuthStateChanged = (cb) => onAuthStateChanged(auth, cb);
 
@@ -1252,8 +1252,15 @@
       };
 
       const handleSignOut = async () => {
-        try { await window._auth.signOut(); } catch (e) { console.error("Sign out error:", e); }
-        // onAuthStateChanged will fire with null and clean up all state
+        try {
+          await window._signOut();
+        } catch (e) {
+          console.error("Sign out error:", e);
+          // Force clear state even if Firebase errors
+          setUser(null);
+          setProjects([]);
+          setActiveProjectId(null);
+        }
       };
 
       if (user === undefined) {
