@@ -13,40 +13,69 @@
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html, body, #root { height: 100%; }
-    body {
-      background: #f7f8fa;
-      color: #111827;
-      font-family: 'Inter', sans-serif;
-      font-size: 14px;
-      line-height: 1.6;
-      -webkit-font-smoothing: antialiased;
-    }
+    body { background: #f7f8fa; color: #111827; font-family: 'Inter', sans-serif; font-size: 14px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
     ::-webkit-scrollbar { width: 5px; height: 5px; }
     ::-webkit-scrollbar-track { background: #f1f1f1; }
     ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
     input::placeholder { color: #9ca3af; }
     textarea::placeholder { color: #9ca3af; }
+    .tag-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; letter-spacing: 0.03em; cursor: pointer; transition: all 0.13s; user-select: none; border: 1.5px solid transparent; }
+    .tag-chip:hover { opacity: 0.82; }
     @media print {
       body { background: #fff !important; color: #111 !important; }
       .no-print { display: none !important; }
-      .print-page { page-break-after: always; }
       th { background: #f3f4f6 !important; }
     }
   </style>
+  <!-- Firebase SDK -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+    import { getAnalytics } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-analytics.js";
+    import { getFirestore, collection, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyB50EBPiytFIvt3bBFKJlkWeBd2Q86cYd0",
+      authDomain: "buysight-c23ec.firebaseapp.com",
+      projectId: "buysight-c23ec",
+      storageBucket: "buysight-c23ec.firebasestorage.app",
+      messagingSenderId: "911436611144",
+      appId: "1:911436611144:web:9a3c2f5a3aab8266fd227d",
+      measurementId: "G-QHK4WSWWKT"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const analytics = getAnalytics(app);
+    const db = getFirestore(app);
+
+    window._db = db;
+    window._fs = { collection, doc, setDoc, onSnapshot };
+    window.dispatchEvent(new Event("firebase-ready"));
+  </script>
 </head>
 <body>
   <div id="root"></div>
-
   <script type="text/babel">
-    const { useState, useRef } = React;
+    const { useState, useRef, useMemo } = React;
 
-    // ── Utility ─────────────────────────────────────────────────────────────────
+    // ── Utility ──────────────────────────────────────────────────────────────────
     const uid = () => Math.random().toString(36).slice(2, 9);
     const fmt = (val) => (val === null || val === undefined || val === "") ? "—" : String(val);
     const countByField = (rows, field) => {
       const counts = {};
       rows.forEach((r) => { const v = fmt(r[field]); counts[v] = (counts[v] || 0) + 1; });
       return counts;
+    };
+    const relativeTime = (ts) => {
+      const diff = Date.now() - ts;
+      const mins = Math.floor(diff / 60000);
+      const hrs = Math.floor(diff / 3600000);
+      const days = Math.floor(diff / 86400000);
+      if (mins < 2) return "just now";
+      if (mins < 60) return `${mins}m ago`;
+      if (hrs < 24) return `${hrs}h ago`;
+      if (days === 1) return "yesterday";
+      if (days < 7) return `${days}d ago`;
+      return new Date(ts).toLocaleDateString();
     };
 
     // ── Theme ────────────────────────────────────────────────────────────────────
@@ -58,15 +87,20 @@
       danger: "#dc2626", dangerBg: "#fef2f2", accent: "#2563eb", accentBg: "#eff4ff",
     };
 
+    const TAG_PALETTE = [
+      { bg: "#eff4ff", text: "#2563eb", dot: "#2563eb" },
+      { bg: "#f0fdf4", text: "#16a34a", dot: "#16a34a" },
+      { bg: "#fffbeb", text: "#d97706", dot: "#d97706" },
+      { bg: "#fdf4ff", text: "#9333ea", dot: "#9333ea" },
+      { bg: "#fff1f2", text: "#e11d48", dot: "#e11d48" },
+      { bg: "#f0fdfa", text: "#0d9488", dot: "#0d9488" },
+      { bg: "#fff7ed", text: "#ea580c", dot: "#ea580c" },
+    ];
+    const tagColor = (tag, allTags) => TAG_PALETTE[Math.max(0, allTags.indexOf(tag)) % TAG_PALETTE.length];
+
     // ── Shared Components ────────────────────────────────────────────────────────
     const Btn = ({ children, onClick, variant = "primary", small, disabled, style }) => {
-      const base = {
-        display: "inline-flex", alignItems: "center", gap: 6,
-        padding: small ? "5px 11px" : "8px 16px", borderRadius: 6,
-        fontFamily: "'Inter', sans-serif", fontSize: small ? 12 : 13, fontWeight: 500,
-        cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.45 : 1,
-        border: "none", transition: "all 0.13s", letterSpacing: "0.01em", whiteSpace: "nowrap",
-      };
+      const base = { display: "inline-flex", alignItems: "center", gap: 6, padding: small ? "5px 11px" : "8px 16px", borderRadius: 6, fontFamily: "'Inter', sans-serif", fontSize: small ? 12 : 13, fontWeight: 500, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.45 : 1, border: "none", transition: "all 0.13s", letterSpacing: "0.01em", whiteSpace: "nowrap" };
       const variants = {
         primary: { background: T.navy, color: "#fff" },
         blue: { background: T.blue, color: "#fff" },
@@ -77,18 +111,10 @@
       return <button style={{ ...base, ...variants[variant], ...style }} onClick={onClick} disabled={disabled}>{children}</button>;
     };
 
-    const Tag = ({ children, color }) => {
-      const presets = {
-        blue: { bg: T.accentBg, text: T.blue }, green: { bg: T.successBg, text: T.success },
-        amber: { bg: T.warningBg, text: T.warning }, red: { bg: T.dangerBg, text: T.danger },
-        gray: { bg: "#f3f4f6", text: T.muted },
-      };
+    const StatusTag = ({ children, color }) => {
+      const presets = { blue: { bg: T.accentBg, text: T.blue }, green: { bg: T.successBg, text: T.success }, amber: { bg: T.warningBg, text: T.warning }, red: { bg: T.dangerBg, text: T.danger }, gray: { bg: "#f3f4f6", text: T.muted } };
       const p = presets[color] || presets.gray;
-      return (
-        <span style={{ display: "inline-flex", alignItems: "center", padding: "2px 8px", borderRadius: 20, fontSize: 11, fontWeight: 600, background: p.bg, color: p.text, letterSpacing: "0.03em", textTransform: "uppercase" }}>
-          {children}
-        </span>
-      );
+      return <span style={{ display: "inline-flex", alignItems: "center", padding: "2px 8px", borderRadius: 20, fontSize: 11, fontWeight: 600, background: p.bg, color: p.text, letterSpacing: "0.03em", textTransform: "uppercase" }}>{children}</span>;
     };
 
     const SectionTitle = ({ children, sub }) => (
@@ -99,19 +125,15 @@
     );
 
     const Card = ({ children, style }) => (
-      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: 24, ...style }}>
-        {children}
-      </div>
+      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: 24, ...style }}>{children}</div>
     );
 
     const FieldLabel = ({ children }) => (
-      <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: T.muted, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>
-        {children}
-      </label>
+      <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: T.muted, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>{children}</label>
     );
 
-    const Input = ({ value, onChange, placeholder, style }) => (
-      <input value={value} onChange={onChange} placeholder={placeholder}
+    const Input = ({ value, onChange, placeholder, style, onKeyDown }) => (
+      <input value={value} onChange={onChange} placeholder={placeholder} onKeyDown={onKeyDown}
         style={{ background: "#fff", border: `1px solid ${T.border}`, borderRadius: 6, color: T.text, fontFamily: "'Inter', sans-serif", fontSize: 13, padding: "8px 12px", outline: "none", width: "100%", transition: "border-color 0.13s", ...style }}
         onFocus={(e) => (e.target.style.borderColor = T.blue)}
         onBlur={(e) => (e.target.style.borderColor = T.border)}
@@ -119,14 +141,72 @@
     );
 
     const Select = ({ value, onChange, children, style }) => (
-      <select value={value} onChange={onChange}
-        style={{ background: "#fff", border: `1px solid ${T.border}`, borderRadius: 6, color: T.text, fontFamily: "'Inter', sans-serif", fontSize: 13, padding: "7px 10px", outline: "none", cursor: "pointer", ...style }}>
+      <select value={value} onChange={onChange} style={{ background: "#fff", border: `1px solid ${T.border}`, borderRadius: 6, color: T.text, fontFamily: "'Inter', sans-serif", fontSize: 13, padding: "7px 10px", outline: "none", cursor: "pointer", ...style }}>
         {children}
       </select>
     );
 
-    // ── Upload Zone ──────────────────────────────────────────────────────────────
-    const UploadZone = ({ onParsed, label = "Drop an Excel or CSV file" }) => {
+    // ── Tag Chip ─────────────────────────────────────────────────────────────────
+    const TagChip = ({ tag, allTags, onRemove, onClick, dimmed, style }) => {
+      const c = tagColor(tag, allTags);
+      return (
+        <span className="tag-chip" onClick={onClick}
+          style={{ background: dimmed ? "#f3f4f6" : c.bg, color: dimmed ? T.mutedLight : c.text, borderColor: dimmed ? "transparent" : c.dot + "55", ...style }}>
+          <span style={{ width: 6, height: 6, borderRadius: "50%", background: dimmed ? T.mutedLight : c.dot, display: "inline-block", flexShrink: 0 }} />
+          {tag}
+          {onRemove && <span onClick={(e) => { e.stopPropagation(); onRemove(tag); }} style={{ marginLeft: 2, opacity: 0.55, fontWeight: 400, fontSize: 14, lineHeight: 1 }}>×</span>}
+        </span>
+      );
+    };
+
+    // ── Tag Editor ────────────────────────────────────────────────────────────────
+    const TagEditor = ({ tags, allTags, onChange }) => {
+      const [input, setInput] = useState("");
+      const [open, setOpen] = useState(false);
+      const addTag = (val) => {
+        const t = val.trim().toLowerCase().replace(/\s+/g, "-");
+        if (!t || tags.includes(t)) { setInput(""); setOpen(false); return; }
+        onChange([...tags, t]);
+        setInput(""); setOpen(false);
+      };
+      const removeTag = (t) => onChange(tags.filter((x) => x !== t));
+      const suggestions = allTags.filter((t) => !tags.includes(t) && (input.length === 0 || t.includes(input.toLowerCase())));
+
+      return (
+        <div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+            {tags.map((t) => <TagChip key={t} tag={t} allTags={allTags} onRemove={removeTag} />)}
+          </div>
+          <div style={{ position: "relative", maxWidth: 280 }}>
+            <Input value={input} onChange={(e) => { setInput(e.target.value); setOpen(true); }} placeholder="Add tag…" style={{ fontSize: 12 }}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (input.trim()) addTag(input); } if (e.key === "Escape") setOpen(false); }}
+              onFocus={() => setOpen(true)} onBlur={(e) => { e.target.style.borderColor = T.border; setTimeout(() => setOpen(false), 150); }}
+            />
+            {open && suggestions.length > 0 && (
+              <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, background: "#fff", border: `1px solid ${T.border}`, borderRadius: 8, boxShadow: "0 4px 16px rgba(0,0,0,0.08)", zIndex: 200 }}>
+                {suggestions.slice(0, 6).map((s) => (
+                  <div key={s} onMouseDown={() => addTag(s)} style={{ padding: "8px 12px", cursor: "pointer", fontSize: 12 }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = T.bg}
+                    onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>
+                    <TagChip tag={s} allTags={allTags} />
+                  </div>
+                ))}
+                {input.trim() && !allTags.includes(input.trim().toLowerCase()) && (
+                  <div onMouseDown={() => addTag(input)} style={{ padding: "8px 12px", cursor: "pointer", fontSize: 12, color: T.blue, borderTop: `1px solid ${T.borderLight}` }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = T.bg}
+                    onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>
+                    + Create "<strong>{input.trim()}</strong>"
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    };
+
+    // ── Upload Zone ───────────────────────────────────────────────────────────────
+    const UploadZone = ({ onParsed, label = "Drop an Excel or CSV file", expectedHeaders }) => {
       const [dragging, setDragging] = useState(false);
       const [error, setError] = useState(null);
       const fileRef = useRef();
@@ -140,30 +220,49 @@
             const ws = wb.Sheets[wb.SheetNames[0]];
             const data = XLSX.utils.sheet_to_json(ws, { defval: "" });
             if (!data.length) { setError("No data found in file."); return; }
+            if (expectedHeaders && expectedHeaders.length > 0) {
+              const incoming = Object.keys(data[0]);
+              const missing = expectedHeaders.filter((h) => !incoming.includes(h));
+              const extra = incoming.filter((h) => !expectedHeaders.includes(h));
+              if (missing.length > 0 || extra.length > 0) {
+                let lines = [];
+                if (missing.length) lines.push(`Missing columns (${missing.length}): ${missing.join(", ")}`);
+                if (extra.length) lines.push(`Unexpected columns (${extra.length}): ${extra.join(", ")}`);
+                setError(lines.join("\n"));
+                if (fileRef.current) fileRef.current.value = "";
+                return;
+              }
+            }
             onParsed(data, file.name);
+            if (fileRef.current) fileRef.current.value = "";
           } catch { setError("Could not parse file. Please use .xlsx or .csv."); }
         };
         reader.readAsBinaryString(file);
       };
 
       return (
-        <div
-          onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-          onDragLeave={() => setDragging(false)}
-          onDrop={(e) => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files[0]; if (f) parse(f); }}
-          onClick={() => fileRef.current.click()}
-          style={{ border: `2px dashed ${dragging ? T.blue : T.border}`, borderRadius: 10, padding: "36px 24px", textAlign: "center", cursor: "pointer", transition: "all 0.18s", background: dragging ? T.accentBg : T.bg }}
-        >
-          <div style={{ fontSize: 26, marginBottom: 8 }}>📂</div>
-          <p style={{ color: T.textSecondary, fontWeight: 500, fontSize: 14 }}>{label}</p>
-          <p style={{ color: T.mutedLight, fontSize: 12, marginTop: 4 }}>Click to browse or drag and drop · .xlsx / .csv</p>
-          {error && <p style={{ color: T.danger, fontSize: 12, marginTop: 10, fontWeight: 500 }}>{error}</p>}
-          <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" style={{ display: "none" }} onChange={(e) => e.target.files[0] && parse(e.target.files[0])} />
+        <div>
+          <div onDragOver={(e) => { e.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)}
+            onDrop={(e) => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files[0]; if (f) parse(f); }}
+            onClick={() => fileRef.current.click()}
+            style={{ border: `2px dashed ${dragging ? T.blue : T.border}`, borderRadius: 10, padding: "36px 24px", textAlign: "center", cursor: "pointer", transition: "all 0.18s", background: dragging ? T.accentBg : T.bg }}>
+            <div style={{ fontSize: 26, marginBottom: 8 }}>📂</div>
+            <p style={{ color: T.textSecondary, fontWeight: 500, fontSize: 14 }}>{label}</p>
+            <p style={{ color: T.mutedLight, fontSize: 12, marginTop: 4 }}>Click to browse or drag and drop · .xlsx / .csv</p>
+            <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" style={{ display: "none" }} onChange={(e) => e.target.files[0] && parse(e.target.files[0])} />
+          </div>
+          {error && (
+            <div style={{ marginTop: 12, background: T.dangerBg, border: `1px solid #fca5a5`, borderRadius: 8, padding: "14px 16px" }}>
+              <div style={{ fontWeight: 600, color: T.danger, fontSize: 13, marginBottom: 6 }}>⚠ Upload rejected — header mismatch</div>
+              <pre style={{ color: "#991b1b", fontSize: 12, whiteSpace: "pre-wrap", fontFamily: "'IBM Plex Mono', monospace", lineHeight: 1.8 }}>{error}</pre>
+              <p style={{ color: "#991b1b", fontSize: 12, marginTop: 8 }}>Adjust your spreadsheet headers to match those listed above the upload zone, then try again.</p>
+            </div>
+          )}
         </div>
       );
     };
 
-    // ── Template Builder ─────────────────────────────────────────────────────────
+    // ── Template Builder ──────────────────────────────────────────────────────────
     const WIDGET_TYPES = [
       { value: "stat_card", label: "Stat Card (count / sum)" },
       { value: "breakdown_table", label: "Breakdown Table (group by field)" },
@@ -176,19 +275,15 @@
       const [widgets, setWidgets] = useState(project.template?.widgets || []);
       const [reportTitle, setReportTitle] = useState(project.template?.reportTitle || `${project.name} — Pipeline Report`);
       const columns = project.uploads[0] ? Object.keys(project.uploads[0].rows[0] || {}) : [];
-
       const addWidget = () => setWidgets([...widgets, { id: uid(), type: "stat_card", label: "", field: columns[0] || "", statMode: "count" }]);
       const updateWidget = (id, changes) => setWidgets(widgets.map((w) => (w.id === id ? { ...w, ...changes } : w)));
       const removeWidget = (id) => setWidgets(widgets.filter((w) => w.id !== id));
       const moveWidget = (id, dir) => {
         const idx = widgets.findIndex((w) => w.id === id);
-        const next = [...widgets];
-        const target = idx + dir;
+        const next = [...widgets]; const target = idx + dir;
         if (target < 0 || target >= next.length) return;
-        [next[idx], next[target]] = [next[target], next[idx]];
-        setWidgets(next);
+        [next[idx], next[target]] = [next[target], next[idx]]; setWidgets(next);
       };
-
       return (
         <div>
           <SectionTitle sub="Configure the sections that will appear in your generated reports.">Template Builder</SectionTitle>
@@ -196,14 +291,12 @@
             <FieldLabel>Report Title</FieldLabel>
             <Input value={reportTitle} onChange={(e) => setReportTitle(e.target.value)} placeholder="Report title..." />
           </Card>
-
           {widgets.length === 0 && (
             <div style={{ textAlign: "center", padding: "40px 0", color: T.muted, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, marginBottom: 16 }}>
               <div style={{ fontSize: 26, marginBottom: 8 }}>📐</div>
               <p style={{ fontWeight: 500 }}>No sections yet — add your first below.</p>
             </div>
           )}
-
           {widgets.map((w, i) => (
             <Card key={w.id} style={{ marginBottom: 10 }}>
               <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
@@ -243,14 +336,8 @@
                         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 2 }}>
                           {columns.map((c) => (
                             <label key={c} style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", fontSize: 12, color: T.textSecondary }}>
-                              <input type="checkbox"
-                                checked={(w.selectedCols || columns).includes(c)}
-                                onChange={(e) => {
-                                  const prev = w.selectedCols || columns;
-                                  const next = e.target.checked ? [...prev, c] : prev.filter((x) => x !== c);
-                                  updateWidget(w.id, { selectedCols: next });
-                                }}
-                              /> {c}
+                              <input type="checkbox" checked={(w.selectedCols || columns).includes(c)}
+                                onChange={(e) => { const prev = w.selectedCols || columns; updateWidget(w.id, { selectedCols: e.target.checked ? [...prev, c] : prev.filter((x) => x !== c) }); }} /> {c}
                             </label>
                           ))}
                         </div>
@@ -273,7 +360,6 @@
               </div>
             </Card>
           ))}
-
           <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
             <Btn variant="ghost" onClick={addWidget}>+ Add Section</Btn>
             <Btn onClick={() => onSave({ reportTitle, widgets })}>Save Template</Btn>
@@ -282,16 +368,9 @@
       );
     };
 
-    // ── Report Renderer ──────────────────────────────────────────────────────────
-    const thStyle = {
-      padding: "9px 14px", textAlign: "left", fontSize: 11, textTransform: "uppercase",
-      letterSpacing: "0.07em", color: T.muted, borderBottom: `1px solid ${T.border}`,
-      fontFamily: "'Inter', sans-serif", fontWeight: 600, background: T.bg,
-    };
-    const tdStyle = {
-      padding: "9px 14px", fontSize: 13, color: T.textSecondary,
-      fontFamily: "'Inter', sans-serif", borderBottom: `1px solid ${T.borderLight}`,
-    };
+    // ── Report Renderer ───────────────────────────────────────────────────────────
+    const thStyle = { padding: "9px 14px", textAlign: "left", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.07em", color: T.muted, borderBottom: `1px solid ${T.border}`, fontFamily: "'Inter', sans-serif", fontWeight: 600, background: T.bg };
+    const tdStyle = { padding: "9px 14px", fontSize: 13, color: T.textSecondary, fontFamily: "'Inter', sans-serif", borderBottom: `1px solid ${T.borderLight}` };
 
     const StatCard = ({ label, value, sub }) => (
       <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "18px 22px", minWidth: 160, flex: 1 }}>
@@ -307,25 +386,14 @@
       return (
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr>
-                <th style={thStyle}>Value</th>
-                <th style={{ ...thStyle, textAlign: "right" }}>Count</th>
-                <th style={{ ...thStyle, textAlign: "right" }}>Share</th>
-                <th style={{ ...thStyle, width: 140 }}>Distribution</th>
-              </tr>
-            </thead>
+            <thead><tr><th style={thStyle}>Value</th><th style={{ ...thStyle, textAlign: "right" }}>Count</th><th style={{ ...thStyle, textAlign: "right" }}>Share</th><th style={{ ...thStyle, width: 140 }}>Distribution</th></tr></thead>
             <tbody>
               {entries.map(([v, c]) => (
                 <tr key={v}>
                   <td style={tdStyle}>{v}</td>
                   <td style={{ ...tdStyle, textAlign: "right", fontFamily: "'IBM Plex Mono', monospace", fontWeight: 500, color: T.navy }}>{c}</td>
                   <td style={{ ...tdStyle, textAlign: "right", color: T.muted, fontFamily: "'IBM Plex Mono', monospace" }}>{((c / total) * 100).toFixed(1)}%</td>
-                  <td style={tdStyle}>
-                    <div style={{ background: T.borderLight, borderRadius: 3, height: 6, overflow: "hidden" }}>
-                      <div style={{ background: T.blue, height: "100%", width: `${(c / total) * 100}%`, borderRadius: 3 }} />
-                    </div>
-                  </td>
+                  <td style={tdStyle}><div style={{ background: T.borderLight, borderRadius: 3, height: 6, overflow: "hidden" }}><div style={{ background: T.blue, height: "100%", width: `${(c / total) * 100}%`, borderRadius: 3 }} /></div></td>
                 </tr>
               ))}
             </tbody>
@@ -338,13 +406,7 @@
       <div style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead><tr>{cols.map((c) => <th key={c} style={thStyle}>{c}</th>)}</tr></thead>
-          <tbody>
-            {rows.map((row, i) => (
-              <tr key={i} style={{ background: i % 2 === 0 ? "#fff" : T.bg }}>
-                {cols.map((c) => <td key={c} style={tdStyle}>{fmt(row[c])}</td>)}
-              </tr>
-            ))}
-          </tbody>
+          <tbody>{rows.map((row, i) => (<tr key={i} style={{ background: i % 2 === 0 ? "#fff" : T.bg }}>{cols.map((c) => <td key={c} style={tdStyle}>{fmt(row[c])}</td>)}</tr>))}</tbody>
         </table>
       </div>
     );
@@ -357,8 +419,8 @@
       const changes = [];
       allIds.forEach((id) => {
         const p = prevMap[id]; const c = currMap[id];
-        if (!p) { changes.push({ id, type: "added", row: c }); return; }
-        if (!c) { changes.push({ id, type: "removed", row: p }); return; }
+        if (!p) { changes.push({ id, type: "added" }); return; }
+        if (!c) { changes.push({ id, type: "removed" }); return; }
         columns.filter((col) => String(p[col]) !== String(c[col])).forEach((col) => changes.push({ id, type: "changed", col, from: p[col], to: c[col] }));
       });
       if (!changes.length) return <p style={{ color: T.muted, fontSize: 13, padding: "20px 0" }}>No changes detected between uploads.</p>;
@@ -373,20 +435,12 @@
             <StatCard label="Updated" value={[...new Set(changed.map((c) => c.id))].length} sub="Field changes" />
           </div>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr>
-                <th style={thStyle}>{idCol}</th>
-                <th style={thStyle}>Change</th>
-                <th style={thStyle}>Field</th>
-                <th style={thStyle}>Previous</th>
-                <th style={thStyle}>Current</th>
-              </tr>
-            </thead>
+            <thead><tr><th style={thStyle}>{idCol}</th><th style={thStyle}>Change</th><th style={thStyle}>Field</th><th style={thStyle}>Previous</th><th style={thStyle}>Current</th></tr></thead>
             <tbody>
               {changes.map((c, i) => (
                 <tr key={i} style={{ background: i % 2 === 0 ? "#fff" : T.bg }}>
                   <td style={{ ...tdStyle, fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: T.navy, fontWeight: 500 }}>{fmt(c.id)}</td>
-                  <td style={tdStyle}><Tag color={c.type === "added" ? "green" : c.type === "removed" ? "red" : "amber"}>{c.type}</Tag></td>
+                  <td style={tdStyle}><StatusTag color={c.type === "added" ? "green" : c.type === "removed" ? "red" : "amber"}>{c.type}</StatusTag></td>
                   <td style={{ ...tdStyle, color: T.muted }}>{c.col || "—"}</td>
                   <td style={{ ...tdStyle, color: c.type === "changed" ? T.danger : T.mutedLight, textDecoration: c.type === "changed" ? "line-through" : "none" }}>{c.type === "changed" ? fmt(c.from) : "—"}</td>
                   <td style={{ ...tdStyle, color: c.type === "removed" ? T.danger : T.success, fontWeight: 500 }}>{c.type === "changed" ? fmt(c.to) : c.type === "added" ? "New" : "Removed"}</td>
@@ -419,11 +473,7 @@
       };
       return (
         <Card style={{ marginBottom: 16, pageBreakInside: "avoid" }}>
-          {widget.label && (
-            <div style={{ marginBottom: 16, paddingBottom: 12, borderBottom: `1px solid ${T.border}` }}>
-              <h3 style={{ fontSize: 15, fontWeight: 600, color: T.navy }}>{widget.label}</h3>
-            </div>
-          )}
+          {widget.label && <div style={{ marginBottom: 16, paddingBottom: 12, borderBottom: `1px solid ${T.border}` }}><h3 style={{ fontSize: 15, fontWeight: 600, color: T.navy }}>{widget.label}</h3></div>}
           {renderContent()}
         </Card>
       );
@@ -448,7 +498,7 @@
           <div className="no-print" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24 }}>
             <div>
               <h2 style={{ fontSize: 20, fontWeight: 700, color: T.navy, letterSpacing: "-0.02em" }}>{template.reportTitle}</h2>
-              <p style={{ color: T.muted, fontSize: 12, marginTop: 4 }}>{upload?.filename} · {upload?.rows.length} targets · {new Date(upload?.uploadedAt).toLocaleDateString()}</p>
+              <p style={{ color: T.muted, fontSize: 12, marginTop: 4 }}>{upload?.filename} · {upload?.rows.length} targets · {new Date(upload?.uploadedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</p>
             </div>
             <Btn onClick={() => window.print()} variant="blue">⬇ Export PDF</Btn>
           </div>
@@ -457,26 +507,34 @@
       );
     };
 
-    // ── Project Detail ───────────────────────────────────────────────────────────
-    const ProjectDetail = ({ project, onUpdate, onBack }) => {
+    // ── Project Detail ────────────────────────────────────────────────────────────
+    const ProjectDetail = ({ project, onUpdate, onBack, allTags }) => {
       const [activeTab, setActiveTab] = useState("overview");
       const [selectedUploadIdx, setSelectedUploadIdx] = useState(Math.max(0, project.uploads.length - 1));
+      const baseHeaders = project.uploads.length > 0 ? Object.keys(project.uploads[0].rows[0] || {}) : null;
 
       const handleNewUpload = (rows, filename) => {
-        const updated = { ...project, uploads: [...project.uploads, { id: uid(), rows, filename, uploadedAt: Date.now() }] };
+        const updated = { ...project, uploads: [...project.uploads, { id: uid(), rows, filename, uploadedAt: Date.now() }], updatedAt: Date.now() };
         onUpdate(updated);
         setSelectedUploadIdx(updated.uploads.length - 1);
       };
-      const handleTemplateSave = (template) => { onUpdate({ ...project, template }); setActiveTab("report"); };
+      const handleTemplateSave = (template) => { onUpdate({ ...project, template, updatedAt: Date.now() }); setActiveTab("report"); };
+      const handleTagsChange = (tags) => onUpdate({ ...project, tags, updatedAt: Date.now() });
       const tabs = [{ key: "overview", label: "Uploads" }, { key: "template", label: "Template Builder" }, { key: "report", label: "Report" }];
 
       return (
         <div>
-          <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 28 }}>
-            <button onClick={onBack} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 6, color: T.muted, cursor: "pointer", fontSize: 16, width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center" }}>←</button>
-            <div>
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 14, marginBottom: 28 }}>
+            <button onClick={onBack} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 6, color: T.muted, cursor: "pointer", fontSize: 16, width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 3 }}>←</button>
+            <div style={{ flex: 1 }}>
               <h1 style={{ fontSize: 22, fontWeight: 700, color: T.navy, letterSpacing: "-0.02em" }}>{project.name}</h1>
-              <p style={{ color: T.muted, fontSize: 12, marginTop: 2 }}>{project.uploads.length} upload{project.uploads.length !== 1 ? "s" : ""} · Created {new Date(project.createdAt).toLocaleDateString()}</p>
+              <p style={{ color: T.muted, fontSize: 12, marginTop: 2 }}>
+                {project.uploads.length} upload{project.uploads.length !== 1 ? "s" : ""} · Created {new Date(project.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                {project.updatedAt && ` · Updated ${new Date(project.updatedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`}
+              </p>
+              <div style={{ marginTop: 12 }}>
+                <TagEditor tags={project.tags || []} allTags={allTags} onChange={handleTagsChange} />
+              </div>
             </div>
           </div>
 
@@ -491,8 +549,15 @@
 
           {activeTab === "overview" && (
             <div>
-              <SectionTitle sub="Upload new versions of your target list. Headers must remain consistent across uploads.">Pipeline Uploads</SectionTitle>
-              <div style={{ marginBottom: 24 }}><UploadZone onParsed={handleNewUpload} label="Upload updated target list (.xlsx / .csv)" /></div>
+              <SectionTitle sub="Upload new versions of your target list. Headers must exactly match the baseline upload.">Pipeline Uploads</SectionTitle>
+              {baseHeaders && (
+                <div style={{ marginBottom: 16, padding: "10px 14px", background: T.accentBg, borderRadius: 8, border: "1px solid #bfdbfe", fontSize: 12, color: "#1d4ed8", lineHeight: 1.7 }}>
+                  <strong>Required headers ({baseHeaders.length}):</strong> {baseHeaders.join(", ")}
+                </div>
+              )}
+              <div style={{ marginBottom: 24 }}>
+                <UploadZone onParsed={handleNewUpload} label="Upload updated target list (.xlsx / .csv)" expectedHeaders={baseHeaders} />
+              </div>
               {project.uploads.length === 0 && <p style={{ color: T.muted, textAlign: "center", padding: 40 }}>No uploads yet.</p>}
               {project.uploads.map((u, i) => (
                 <Card key={u.id} style={{ marginBottom: 10, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px" }}>
@@ -500,12 +565,12 @@
                     <div style={{ width: 36, height: 36, borderRadius: 6, background: T.accentBg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }}>📄</div>
                     <div>
                       <div style={{ fontWeight: 600, color: T.text, fontSize: 13 }}>{u.filename}</div>
-                      <div style={{ color: T.muted, fontSize: 12, marginTop: 1 }}>{u.rows.length} rows · {Object.keys(u.rows[0] || {}).length} columns · {new Date(u.uploadedAt).toLocaleString()}</div>
+                      <div style={{ color: T.muted, fontSize: 12, marginTop: 1 }}>{u.rows.length} rows · {Object.keys(u.rows[0] || {}).length} columns · {new Date(u.uploadedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</div>
                     </div>
                   </div>
                   <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                    {i === 0 && <Tag color="gray">Baseline</Tag>}
-                    {i === project.uploads.length - 1 && i > 0 && <Tag color="blue">Latest</Tag>}
+                    {i === 0 && <StatusTag color="gray">Baseline</StatusTag>}
+                    {i === project.uploads.length - 1 && i > 0 && <StatusTag color="blue">Latest</StatusTag>}
                     <Btn small variant="outline" onClick={() => { setSelectedUploadIdx(i); setActiveTab("report"); }}>View Report</Btn>
                   </div>
                 </Card>
@@ -521,14 +586,14 @@
 
           {activeTab === "report" && (
             project.uploads.length === 0
-              ? <div style={{ textAlign: "center", padding: "60px 0", color: T.muted }}><p>No uploads yet. Upload a target list to generate reports.</p></div>
+              ? <div style={{ textAlign: "center", padding: "60px 0", color: T.muted }}><p>No uploads yet.</p></div>
               : (
                 <div>
                   {project.uploads.length > 1 && (
                     <div className="no-print" style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 24, padding: "14px 18px", background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8 }}>
-                      <span style={{ color: T.muted, fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em" }}>Viewing Upload</span>
+                      <span style={{ color: T.muted, fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em" }}>Viewing</span>
                       <Select value={selectedUploadIdx} onChange={(e) => setSelectedUploadIdx(Number(e.target.value))}>
-                        {project.uploads.map((u, i) => <option key={u.id} value={i}>{u.filename} — {new Date(u.uploadedAt).toLocaleDateString()}</option>)}
+                        {project.uploads.map((u, i) => <option key={u.id} value={i}>{u.filename} — {new Date(u.uploadedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</option>)}
                       </Select>
                     </div>
                   )}
@@ -540,16 +605,48 @@
       );
     };
 
-    // ── Projects Home ────────────────────────────────────────────────────────────
-    const ProjectsHome = ({ projects, onSelect, onCreate }) => {
+    // ── Projects Home ─────────────────────────────────────────────────────────────
+    const ProjectsHome = ({ projects, onSelect, onCreate, allTags }) => {
       const [newName, setNewName] = useState("");
+      const [newTags, setNewTags] = useState([]);
       const [creating, setCreating] = useState(false);
+      const [activeFilters, setActiveFilters] = useState([]);
+
+      const toggleFilter = (tag) => setActiveFilters((f) => f.includes(tag) ? f.filter((t) => t !== tag) : [...f, tag]);
+
+      const visible = useMemo(() => {
+        const base = activeFilters.length
+          ? projects.filter((p) => activeFilters.every((t) => (p.tags || []).includes(t)))
+          : projects;
+        return [...base].sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt));
+      }, [projects, activeFilters]);
+
       return (
         <div>
-          <div style={{ marginBottom: 32 }}>
-            <h2 style={{ fontSize: 20, fontWeight: 700, color: T.navy, letterSpacing: "-0.02em" }}>Projects</h2>
-            <p style={{ color: T.muted, fontSize: 13, marginTop: 4 }}>Manage your active deal origination searches and pipeline tracking projects.</p>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 28 }}>
+            <div>
+              <h2 style={{ fontSize: 20, fontWeight: 700, color: T.navy, letterSpacing: "-0.02em" }}>Projects</h2>
+              <p style={{ color: T.muted, fontSize: 13, marginTop: 4 }}>Manage your active deal origination searches and pipeline tracking projects.</p>
+            </div>
+
           </div>
+
+          {/* Tag filter bar */}
+          {allTags.length > 0 && (
+            <div style={{ marginBottom: 22, padding: "14px 18px", background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: T.muted, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 10 }}>Filter by tag</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+                {allTags.map((t) => (
+                  <TagChip key={t} tag={t} allTags={allTags}
+                    dimmed={activeFilters.length > 0 && !activeFilters.includes(t)}
+                    onClick={() => toggleFilter(t)} />
+                ))}
+                {activeFilters.length > 0 && (
+                  <button onClick={() => setActiveFilters([])} style={{ background: "none", border: "none", color: T.muted, fontSize: 12, cursor: "pointer", marginLeft: 4, textDecoration: "underline" }}>Clear filters</button>
+                )}
+              </div>
+            </div>
+          )}
 
           {projects.length === 0 && (
             <div style={{ textAlign: "center", padding: "70px 0", color: T.muted, background: T.surface, border: `1px dashed ${T.border}`, borderRadius: 12, marginBottom: 24 }}>
@@ -559,31 +656,58 @@
             </div>
           )}
 
+          {activeFilters.length > 0 && visible.length === 0 && (
+            <div style={{ textAlign: "center", padding: "36px 0", color: T.muted, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, marginBottom: 20 }}>
+              <p>No projects match the selected filters.</p>
+            </div>
+          )}
+
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(290px, 1fr))", gap: 14, marginBottom: 24 }}>
-            {projects.map((p) => (
+            {visible.map((p) => (
               <div key={p.id} onClick={() => onSelect(p.id)}
                 style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: 22, cursor: "pointer", transition: "box-shadow 0.15s, border-color 0.15s, transform 0.15s" }}
                 onMouseEnter={(e) => { e.currentTarget.style.borderColor = T.navy; e.currentTarget.style.boxShadow = "0 4px 16px rgba(15,32,68,0.08)"; e.currentTarget.style.transform = "translateY(-2px)"; }}
-                onMouseLeave={(e) => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.boxShadow = "none"; e.currentTarget.style.transform = ""; }}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
-                  <h3 style={{ fontSize: 15, color: T.navy, fontWeight: 700, lineHeight: 1.3 }}>{p.name}</h3>
-                  {p.uploads.length > 0 && <Tag color="gray">{p.uploads.length} upload{p.uploads.length !== 1 ? "s" : ""}</Tag>}
+                onMouseLeave={(e) => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.boxShadow = "none"; e.currentTarget.style.transform = ""; }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+                  <h3 style={{ fontSize: 15, color: T.navy, fontWeight: 700, lineHeight: 1.3, flex: 1, marginRight: 8 }}>{p.name}</h3>
+                  {p.uploads.length > 0 && <StatusTag color="gray">{p.uploads.length} upload{p.uploads.length !== 1 ? "s" : ""}</StatusTag>}
                 </div>
-                <p style={{ color: T.mutedLight, fontSize: 12 }}>Created {new Date(p.createdAt).toLocaleDateString()}</p>
-                {p.uploads.length > 0 && <p style={{ color: T.muted, fontSize: 12, marginTop: 3 }}>Last: {new Date(p.uploads[p.uploads.length - 1].uploadedAt).toLocaleDateString()} · {p.uploads[p.uploads.length - 1].rows.length} targets</p>}
-                {p.template?.widgets?.length > 0 && <div style={{ marginTop: 12 }}><Tag color="blue">Template configured</Tag></div>}
+
+                {(p.tags || []).length > 0 && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 10 }}>
+                    {(p.tags || []).map((t) => <TagChip key={t} tag={t} allTags={allTags} style={{ fontSize: 10, padding: "2px 8px" }} />)}
+                  </div>
+                )}
+
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, marginTop: 4 }}>
+                  <span style={{ color: T.mutedLight }}>Created {new Date(p.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>
+                  <span style={{ color: T.muted, fontWeight: 500 }}>
+                    {p.updatedAt || p.uploads.length > 0
+                      ? `Updated ${new Date(p.updatedAt || p.uploads[p.uploads.length - 1]?.uploadedAt || p.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`
+                      : ""}
+                  </span>
+                </div>
+
+                {p.uploads.length > 0 && (
+                  <p style={{ color: T.muted, fontSize: 12, marginTop: 3 }}>
+                    {p.uploads[p.uploads.length - 1].rows.length} targets · {p.uploads[p.uploads.length - 1].filename}
+                  </p>
+                )}
+
+                {p.template?.widgets?.length > 0 && <div style={{ marginTop: 10 }}><StatusTag color="blue">Template configured</StatusTag></div>}
               </div>
             ))}
           </div>
 
           {creating ? (
-            <Card style={{ maxWidth: 420 }}>
+            <Card style={{ maxWidth: 460 }}>
               <FieldLabel>Project Name</FieldLabel>
-              <Input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="e.g. Industrial Services — Q2 2025" />
-              <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
-                <Btn onClick={() => { if (newName.trim()) { onCreate(newName.trim()); setNewName(""); setCreating(false); } }} disabled={!newName.trim()}>Create Project</Btn>
-                <Btn variant="ghost" onClick={() => setCreating(false)}>Cancel</Btn>
+              <Input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="e.g. Industrial Services — Q2 2025" style={{ marginBottom: 14 }} />
+              <FieldLabel>Tags (optional)</FieldLabel>
+              <TagEditor tags={newTags} allTags={allTags} onChange={setNewTags} />
+              <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+                <Btn onClick={() => { if (newName.trim()) { onCreate(newName.trim(), newTags); setNewName(""); setNewTags([]); setCreating(false); } }} disabled={!newName.trim()}>Create Project</Btn>
+                <Btn variant="ghost" onClick={() => { setCreating(false); setNewTags([]); }}>Cancel</Btn>
               </div>
             </Card>
           ) : (
@@ -593,26 +717,56 @@
       );
     };
 
-    // ── App Shell ────────────────────────────────────────────────────────────────
+    // ── App Shell ─────────────────────────────────────────────────────────────────
     function App() {
       const [projects, setProjects] = useState([]);
       const [activeProjectId, setActiveProjectId] = useState(null);
       const activeProject = projects.find((p) => p.id === activeProjectId);
-      const createProject = (name) => {
-        const p = { id: uid(), name, createdAt: Date.now(), uploads: [], template: null };
-        setProjects([...projects, p]);
+
+      const allTags = useMemo(() => {
+        const set = new Set();
+        projects.forEach((p) => (p.tags || []).forEach((t) => set.add(t)));
+        return Array.from(set).sort();
+      }, [projects]);
+
+
+      // Load projects from Firestore on mount
+      React.useEffect(() => {
+        const init = () => {
+          const { collection, onSnapshot } = window._fs;
+          onSnapshot(collection(window._db, "projects"), (snap) => {
+            setProjects(snap.docs.map(d => d.data()));
+          });
+        };
+        if (window._db) init();
+        else window.addEventListener("firebase-ready", init, { once: true });
+      }, []);
+      const createProject = async (name, tags = []) => {
+        const p = { id: uid(), name, tags, createdAt: Date.now(), updatedAt: Date.now(), uploads: [], template: null };
+        setProjects(prev => [...prev, p]);
         setActiveProjectId(p.id);
+        if (window._db) {
+          const { doc, setDoc } = window._fs;
+          try {
+            await setDoc(doc(window._db, "projects", p.id), JSON.parse(JSON.stringify(p)));
+          } catch (e) { console.error("Firestore create error:", e); }
+        }
       };
-      const updateProject = (updated) => setProjects(projects.map((p) => (p.id === updated.id ? updated : p)));
+      const updateProject = async (updated) => {
+        setProjects(prev => prev.map((p) => (p.id === updated.id ? updated : p)));
+        if (window._db) {
+          const { doc, setDoc } = window._fs;
+          try {
+            await setDoc(doc(window._db, "projects", updated.id), JSON.parse(JSON.stringify(updated)));
+          } catch (e) { console.error("Firestore save error:", e); }
+        }
+      };
 
       return (
         <div>
-          {/* Top nav */}
           <div className="no-print" style={{ borderBottom: `1px solid ${T.border}`, padding: "0 32px", display: "flex", alignItems: "center", gap: 12, height: 54, background: "#fff", position: "sticky", top: 0, zIndex: 100, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
             <button onClick={() => setActiveProjectId(null)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 9, padding: 0 }}>
-              <div style={{ width: 28, height: 28, borderRadius: 6, background: T.navy, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, color: "#fff", fontWeight: 700, fontFamily: "'Inter', sans-serif", letterSpacing: "-0.02em" }}>
-                BS
-              </div>
+              <div style={{ width: 28, height: 28, borderRadius: 6, background: T.navy, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, color: "#fff", fontWeight: 700, fontFamily: "'Inter', sans-serif", letterSpacing: "-0.02em" }}>BS</div>
               <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 15, color: T.navy, fontWeight: 700, letterSpacing: "-0.02em" }}>BuySight</span>
             </button>
             <span style={{ color: T.border, fontSize: 16, margin: "0 2px" }}>|</span>
@@ -624,17 +778,14 @@
               </React.Fragment>
             )}
             <div style={{ marginLeft: "auto" }}>
-              <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: T.mutedLight }}>
-                {projects.length} project{projects.length !== 1 ? "s" : ""}
-              </span>
+              <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: T.mutedLight }}>{projects.length} project{projects.length !== 1 ? "s" : ""}</span>
             </div>
           </div>
 
-          {/* Content */}
           <div style={{ maxWidth: 1080, margin: "0 auto", padding: "40px 32px" }}>
             {!activeProject
-              ? <ProjectsHome projects={projects} onSelect={setActiveProjectId} onCreate={createProject} />
-              : <ProjectDetail project={activeProject} onUpdate={updateProject} onBack={() => setActiveProjectId(null)} />
+              ? <ProjectsHome projects={projects} onSelect={setActiveProjectId} onCreate={createProject} allTags={allTags} />
+              : <ProjectDetail project={activeProject} onUpdate={updateProject} onBack={() => setActiveProjectId(null)} allTags={allTags} />
             }
           </div>
         </div>
