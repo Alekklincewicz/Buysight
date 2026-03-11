@@ -1,708 +1,647 @@
-import { useState, useRef } from "react";
-import * as XLSX from "xlsx";
-
-// ─── Utility ──────────────────────────────────────────────────────────────────
-
-const uid = () => Math.random().toString(36).slice(2, 9);
-
-const fmt = (val) => {
-  if (val === null || val === undefined || val === "") return "—";
-  return String(val);
-};
-
-const countByField = (rows, field) => {
-  const counts = {};
-  rows.forEach((r) => {
-    const v = fmt(r[field]);
-    counts[v] = (counts[v] || 0) + 1;
-  });
-  return counts;
-};
-
-// ─── Theme ────────────────────────────────────────────────────────────────────
-
-const T = {
-  bg: "#f7f8fa",
-  surface: "#ffffff",
-  border: "#e4e7ed",
-  borderLight: "#eef0f4",
-  navy: "#0f2044",
-  navyLight: "#1a3460",
-  blue: "#2563eb",
-  blueLight: "#eff4ff",
-  text: "#111827",
-  textSecondary: "#374151",
-  muted: "#6b7280",
-  mutedLight: "#9ca3af",
-  success: "#16a34a",
-  successBg: "#f0fdf4",
-  warning: "#d97706",
-  warningBg: "#fffbeb",
-  danger: "#dc2626",
-  dangerBg: "#fef2f2",
-  accent: "#2563eb",
-  accentBg: "#eff4ff",
-};
-
-// ─── Global styles ────────────────────────────────────────────────────────────
-
-const GLOBAL_STYLE = `
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
-
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body, #root { height: 100%; }
-
-  body {
-    background: #f7f8fa;
-    color: #111827;
-    font-family: 'Inter', sans-serif;
-    font-size: 14px;
-    line-height: 1.6;
-    -webkit-font-smoothing: antialiased;
-  }
-
-  ::-webkit-scrollbar { width: 5px; height: 5px; }
-  ::-webkit-scrollbar-track { background: #f1f1f1; }
-  ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
-
-  input::placeholder { color: #9ca3af; }
-  textarea::placeholder { color: #9ca3af; }
-
-  @media print {
-    body { background: #fff !important; color: #111 !important; }
-    .no-print { display: none !important; }
-    .print-page { page-break-after: always; }
-  }
-`;
-
-// ─── Shared components ────────────────────────────────────────────────────────
-
-const Btn = ({ children, onClick, variant = "primary", small, disabled, style }) => {
-  const base = {
-    display: "inline-flex", alignItems: "center", gap: 6,
-    padding: small ? "5px 11px" : "8px 16px",
-    borderRadius: 6,
-    fontFamily: "'Inter', sans-serif",
-    fontSize: small ? 12 : 13,
-    fontWeight: 500,
-    cursor: disabled ? "not-allowed" : "pointer",
-    opacity: disabled ? 0.45 : 1,
-    border: "none",
-    transition: "all 0.13s",
-    letterSpacing: "0.01em",
-    whiteSpace: "nowrap",
-  };
-  const variants = {
-    primary: { background: T.navy, color: "#fff" },
-    blue: { background: T.blue, color: "#fff" },
-    ghost: { background: "transparent", color: T.muted, border: `1px solid ${T.border}` },
-    danger: { background: T.dangerBg, color: T.danger, border: `1px solid #fca5a5` },
-    outline: { background: "transparent", color: T.navy, border: `1px solid ${T.border}` },
-  };
-  return (
-    <button style={{ ...base, ...variants[variant], ...style }} onClick={onClick} disabled={disabled}>
-      {children}
-    </button>
-  );
-};
-
-const Tag = ({ children, color }) => {
-  const presets = {
-    blue: { bg: T.accentBg, text: T.blue },
-    green: { bg: T.successBg, text: T.success },
-    amber: { bg: T.warningBg, text: T.warning },
-    red: { bg: T.dangerBg, text: T.danger },
-    gray: { bg: "#f3f4f6", text: T.muted },
-  };
-  const preset = presets[color] || presets.gray;
-  return (
-    <span style={{
-      display: "inline-flex", alignItems: "center",
-      padding: "2px 8px",
-      borderRadius: 20,
-      fontSize: 11,
-      fontWeight: 600,
-      background: preset.bg,
-      color: preset.text,
-      letterSpacing: "0.03em",
-      textTransform: "uppercase",
-    }}>{children}</span>
-  );
-};
-
-const SectionTitle = ({ children, sub }) => (
-  <div style={{ marginBottom: 24 }}>
-    <h2 style={{ fontSize: 20, fontWeight: 700, color: T.navy, letterSpacing: "-0.02em" }}>{children}</h2>
-    {sub && <p style={{ color: T.muted, fontSize: 13, marginTop: 4 }}>{sub}</p>}
-  </div>
-);
-
-const Card = ({ children, style }) => (
-  <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: 24, ...style }}>
-    {children}
-  </div>
-);
-
-const FieldLabel = ({ children }) => (
-  <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: T.muted, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>
-    {children}
-  </label>
-);
-
-const Input = ({ value, onChange, placeholder, style }) => (
-  <input
-    value={value}
-    onChange={onChange}
-    placeholder={placeholder}
-    style={{ background: "#fff", border: `1px solid ${T.border}`, borderRadius: 6, color: T.text, fontFamily: "'Inter', sans-serif", fontSize: 13, padding: "8px 12px", outline: "none", width: "100%", transition: "border-color 0.13s", ...style }}
-    onFocus={(e) => (e.target.style.borderColor = T.blue)}
-    onBlur={(e) => (e.target.style.borderColor = T.border)}
-  />
-);
-
-const Select = ({ value, onChange, children, style }) => (
-  <select value={value} onChange={onChange} style={{ background: "#fff", border: `1px solid ${T.border}`, borderRadius: 6, color: T.text, fontFamily: "'Inter', sans-serif", fontSize: 13, padding: "7px 10px", outline: "none", cursor: "pointer", ...style }}>
-    {children}
-  </select>
-);
-
-// ─── Upload zone ──────────────────────────────────────────────────────────────
-
-const UploadZone = ({ onParsed, label = "Drop an Excel or CSV file" }) => {
-  const [dragging, setDragging] = useState(false);
-  const [error, setError] = useState(null);
-  const fileRef = useRef();
-
-  const parse = (file) => {
-    setError(null);
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const wb = XLSX.read(e.target.result, { type: "binary" });
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        const data = XLSX.utils.sheet_to_json(ws, { defval: "" });
-        if (!data.length) { setError("No data found in file."); return; }
-        onParsed(data, file.name);
-      } catch {
-        setError("Could not parse file. Please use .xlsx or .csv.");
-      }
-    };
-    reader.readAsBinaryString(file);
-  };
-
-  const onDrop = (e) => {
-    e.preventDefault();
-    setDragging(false);
-    const f = e.dataTransfer.files[0];
-    if (f) parse(f);
-  };
-
-  return (
-    <div
-      onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-      onDragLeave={() => setDragging(false)}
-      onDrop={onDrop}
-      onClick={() => fileRef.current.click()}
-      style={{ border: `2px dashed ${dragging ? T.blue : T.border}`, borderRadius: 10, padding: "36px 24px", textAlign: "center", cursor: "pointer", transition: "all 0.18s", background: dragging ? T.accentBg : T.bg }}
-    >
-      <div style={{ fontSize: 26, marginBottom: 8 }}>📂</div>
-      <p style={{ color: T.textSecondary, fontWeight: 500, fontSize: 14 }}>{label}</p>
-      <p style={{ color: T.mutedLight, fontSize: 12, marginTop: 4 }}>Click to browse or drag and drop · .xlsx / .csv</p>
-      {error && <p style={{ color: T.danger, fontSize: 12, marginTop: 10, fontWeight: 500 }}>{error}</p>}
-      <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" style={{ display: "none" }} onChange={(e) => e.target.files[0] && parse(e.target.files[0])} />
-    </div>
-  );
-};
-
-// ─── Template Builder ─────────────────────────────────────────────────────────
-
-const WIDGET_TYPES = [
-  { value: "stat_card", label: "Stat Card (count / sum)" },
-  { value: "breakdown_table", label: "Breakdown Table (group by field)" },
-  { value: "pipeline_table", label: "Full Pipeline Table" },
-  { value: "delta_table", label: "Delta Table (changes vs prior upload)" },
-  { value: "text_block", label: "Text / Commentary Block" },
-];
-
-const TemplateBuilder = ({ project, onSave }) => {
-  const [widgets, setWidgets] = useState(project.template?.widgets || []);
-  const [reportTitle, setReportTitle] = useState(project.template?.reportTitle || `${project.name} — Pipeline Report`);
-  const columns = project.uploads[0] ? Object.keys(project.uploads[0].rows[0] || {}) : [];
-
-  const addWidget = () => setWidgets([...widgets, { id: uid(), type: "stat_card", label: "", field: columns[0] || "", statMode: "count" }]);
-  const updateWidget = (id, changes) => setWidgets(widgets.map((w) => (w.id === id ? { ...w, ...changes } : w)));
-  const removeWidget = (id) => setWidgets(widgets.filter((w) => w.id !== id));
-  const moveWidget = (id, dir) => {
-    const idx = widgets.findIndex((w) => w.id === id);
-    const next = [...widgets];
-    const target = idx + dir;
-    if (target < 0 || target >= next.length) return;
-    [next[idx], next[target]] = [next[target], next[idx]];
-    setWidgets(next);
-  };
-
-  return (
-    <div>
-      <SectionTitle sub="Configure the sections that will appear in your generated reports.">Template Builder</SectionTitle>
-
-      <Card style={{ marginBottom: 20 }}>
-        <FieldLabel>Report Title</FieldLabel>
-        <Input value={reportTitle} onChange={(e) => setReportTitle(e.target.value)} placeholder="Report title..." />
-      </Card>
-
-      {widgets.length === 0 && (
-        <div style={{ textAlign: "center", padding: "40px 0", color: T.muted, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, marginBottom: 16 }}>
-          <div style={{ fontSize: 26, marginBottom: 8 }}>📐</div>
-          <p style={{ fontWeight: 500 }}>No sections yet — add your first below.</p>
-        </div>
-      )}
-
-      {widgets.map((w, i) => (
-        <Card key={w.id} style={{ marginBottom: 10 }}>
-          <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
-            <div style={{ flex: 1 }}>
-              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                <div style={{ flex: 1, minWidth: 160 }}>
-                  <FieldLabel>Section Label</FieldLabel>
-                  <Input value={w.label} onChange={(e) => updateWidget(w.id, { label: e.target.value })} placeholder="e.g. Status Breakdown" />
-                </div>
-                <div style={{ flex: 1, minWidth: 180 }}>
-                  <FieldLabel>Widget Type</FieldLabel>
-                  <Select value={w.type} onChange={(e) => updateWidget(w.id, { type: e.target.value })} style={{ width: "100%" }}>
-                    {WIDGET_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-                  </Select>
-                </div>
-                {(w.type === "stat_card" || w.type === "breakdown_table") && (
-                  <div style={{ flex: 1, minWidth: 160 }}>
-                    <FieldLabel>Field</FieldLabel>
-                    <Select value={w.field} onChange={(e) => updateWidget(w.id, { field: e.target.value })} style={{ width: "100%" }}>
-                      {columns.map((c) => <option key={c} value={c}>{c}</option>)}
-                    </Select>
-                  </div>
-                )}
-                {w.type === "stat_card" && (
-                  <div style={{ flex: 1, minWidth: 140 }}>
-                    <FieldLabel>Aggregation</FieldLabel>
-                    <Select value={w.statMode || "count"} onChange={(e) => updateWidget(w.id, { statMode: e.target.value })} style={{ width: "100%" }}>
-                      <option value="count">Count (non-empty)</option>
-                      <option value="total">Total Rows</option>
-                      <option value="unique">Unique Values</option>
-                    </Select>
-                  </div>
-                )}
-                {w.type === "pipeline_table" && (
-                  <div style={{ flex: 2, minWidth: 200 }}>
-                    <FieldLabel>Columns to Show</FieldLabel>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 2 }}>
-                      {columns.map((c) => (
-                        <label key={c} style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", fontSize: 12, color: T.textSecondary }}>
-                          <input type="checkbox" checked={(w.selectedCols || columns).includes(c)} onChange={(e) => {
-                            const prev = w.selectedCols || columns;
-                            const next = e.target.checked ? [...prev, c] : prev.filter((x) => x !== c);
-                            updateWidget(w.id, { selectedCols: next });
-                          }} />
-                          {c}
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {w.type === "text_block" && (
-                  <div style={{ flex: 2, minWidth: 200 }}>
-                    <FieldLabel>Commentary</FieldLabel>
-                    <textarea value={w.text || ""} onChange={(e) => updateWidget(w.id, { text: e.target.value })} placeholder="Enter commentary or notes..." style={{ background: "#fff", border: `1px solid ${T.border}`, borderRadius: 6, color: T.text, fontFamily: "'Inter', sans-serif", fontSize: 13, padding: "8px 12px", width: "100%", minHeight: 80, resize: "vertical", outline: "none" }} />
-                  </div>
-                )}
-              </div>
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 4, paddingTop: 20 }}>
-              <Btn small variant="ghost" onClick={() => moveWidget(w.id, -1)} disabled={i === 0}>↑</Btn>
-              <Btn small variant="ghost" onClick={() => moveWidget(w.id, 1)} disabled={i === widgets.length - 1}>↓</Btn>
-              <Btn small variant="danger" onClick={() => removeWidget(w.id)}>✕</Btn>
-            </div>
-          </div>
-        </Card>
-      ))}
-
-      <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
-        <Btn variant="ghost" onClick={addWidget}>+ Add Section</Btn>
-        <Btn onClick={() => onSave({ reportTitle, widgets })}>Save Template</Btn>
-      </div>
-    </div>
-  );
-};
-
-// ─── Report Renderer ──────────────────────────────────────────────────────────
-
-const thStyle = {
-  padding: "9px 14px", textAlign: "left", fontSize: 11, textTransform: "uppercase",
-  letterSpacing: "0.07em", color: T.muted, borderBottom: `1px solid ${T.border}`,
-  fontFamily: "'Inter', sans-serif", fontWeight: 600, background: T.bg,
-};
-
-const tdStyle = {
-  padding: "9px 14px", fontSize: 13, color: T.textSecondary,
-  fontFamily: "'Inter', sans-serif", borderBottom: `1px solid ${T.borderLight}`,
-};
-
-const StatCard = ({ label, value, sub }) => (
-  <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "18px 22px", minWidth: 160, flex: 1 }}>
-    <div style={{ fontSize: 11, fontWeight: 600, color: T.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>{label}</div>
-    <div style={{ fontSize: 34, fontFamily: "'IBM Plex Mono', monospace", fontWeight: 500, color: T.navy, lineHeight: 1 }}>{value}</div>
-    {sub && <div style={{ fontSize: 11, color: T.mutedLight, marginTop: 6 }}>{sub}</div>}
-  </div>
-);
-
-const BreakdownTable = ({ counts }) => {
-  const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
-  const total = entries.reduce((s, [, v]) => s + v, 0);
-  return (
-    <div style={{ overflowX: "auto" }}>
-      <table style={{ width: "100%", borderCollapse: "collapse" }}>
-        <thead>
-          <tr>
-            <th style={thStyle}>Value</th>
-            <th style={{ ...thStyle, textAlign: "right" }}>Count</th>
-            <th style={{ ...thStyle, textAlign: "right" }}>Share</th>
-            <th style={{ ...thStyle, width: 140 }}>Distribution</th>
-          </tr>
-        </thead>
-        <tbody>
-          {entries.map(([v, c]) => (
-            <tr key={v}>
-              <td style={tdStyle}>{v}</td>
-              <td style={{ ...tdStyle, textAlign: "right", fontFamily: "'IBM Plex Mono', monospace", fontWeight: 500, color: T.navy }}>{c}</td>
-              <td style={{ ...tdStyle, textAlign: "right", color: T.muted, fontFamily: "'IBM Plex Mono', monospace" }}>{((c / total) * 100).toFixed(1)}%</td>
-              <td style={tdStyle}>
-                <div style={{ background: T.borderLight, borderRadius: 3, height: 6, overflow: "hidden" }}>
-                  <div style={{ background: T.blue, height: "100%", width: `${(c / total) * 100}%`, borderRadius: 3 }} />
-                </div>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-};
-
-const PipelineTable = ({ rows, cols }) => (
-  <div style={{ overflowX: "auto" }}>
-    <table style={{ width: "100%", borderCollapse: "collapse" }}>
-      <thead>
-        <tr>{cols.map((c) => <th key={c} style={thStyle}>{c}</th>)}</tr>
-      </thead>
-      <tbody>
-        {rows.map((row, i) => (
-          <tr key={i} style={{ background: i % 2 === 0 ? "#fff" : T.bg }}>
-            {cols.map((c) => <td key={c} style={tdStyle}>{fmt(row[c])}</td>)}
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  </div>
-);
-
-const DeltaTable = ({ prevRows, currRows, columns }) => {
-  const idCol = columns[0];
-  const prevMap = {};
-  prevRows.forEach((r) => { prevMap[r[idCol]] = r; });
-  const currMap = {};
-  currRows.forEach((r) => { currMap[r[idCol]] = r; });
-  const allIds = [...new Set([...Object.keys(prevMap), ...Object.keys(currMap)])];
-  const changes = [];
-  allIds.forEach((id) => {
-    const p = prevMap[id]; const c = currMap[id];
-    if (!p) { changes.push({ id, type: "added", row: c }); return; }
-    if (!c) { changes.push({ id, type: "removed", row: p }); return; }
-    columns.filter((col) => String(p[col]) !== String(c[col])).forEach((col) => changes.push({ id, type: "changed", col, from: p[col], to: c[col], row: c }));
-  });
-  if (!changes.length) return <p style={{ color: T.muted, fontSize: 13, padding: "20px 0" }}>No changes detected between uploads.</p>;
-  const added = changes.filter((c) => c.type === "added");
-  const removed = changes.filter((c) => c.type === "removed");
-  const changed = changes.filter((c) => c.type === "changed");
-  return (
-    <div>
-      <div style={{ display: "flex", gap: 14, marginBottom: 24, flexWrap: "wrap" }}>
-        <StatCard label="Added" value={added.length} sub="New targets" />
-        <StatCard label="Removed" value={removed.length} sub="Dropped targets" />
-        <StatCard label="Updated" value={[...new Set(changed.map((c) => c.id))].length} sub="Field changes" />
-      </div>
-      <table style={{ width: "100%", borderCollapse: "collapse" }}>
-        <thead>
-          <tr>
-            <th style={thStyle}>{idCol}</th>
-            <th style={thStyle}>Change</th>
-            <th style={thStyle}>Field</th>
-            <th style={thStyle}>Previous</th>
-            <th style={thStyle}>Current</th>
-          </tr>
-        </thead>
-        <tbody>
-          {changes.map((c, i) => (
-            <tr key={i} style={{ background: i % 2 === 0 ? "#fff" : T.bg }}>
-              <td style={{ ...tdStyle, fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: T.navy, fontWeight: 500 }}>{fmt(c.id)}</td>
-              <td style={tdStyle}><Tag color={c.type === "added" ? "green" : c.type === "removed" ? "red" : "amber"}>{c.type}</Tag></td>
-              <td style={{ ...tdStyle, color: T.muted }}>{c.col || "—"}</td>
-              <td style={{ ...tdStyle, color: c.type === "changed" ? T.danger : T.mutedLight, textDecoration: c.type === "changed" ? "line-through" : "none" }}>{c.type === "changed" ? fmt(c.from) : "—"}</td>
-              <td style={{ ...tdStyle, color: c.type === "removed" ? T.danger : T.success, fontWeight: 500 }}>{c.type === "changed" ? fmt(c.to) : c.type === "added" ? "New" : "Removed"}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-};
-
-const ReportWidget = ({ widget, upload, prevUpload, allColumns }) => {
-  const rows = upload.rows;
-  const cols = allColumns || Object.keys(rows[0] || {});
-  const renderContent = () => {
-    switch (widget.type) {
-      case "stat_card": {
-        let val;
-        if (widget.statMode === "count") val = rows.filter((r) => r[widget.field] !== "" && r[widget.field] !== null && r[widget.field] !== undefined).length;
-        else if (widget.statMode === "total") val = rows.length;
-        else if (widget.statMode === "unique") val = new Set(rows.map((r) => r[widget.field])).size;
-        return <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}><StatCard label={widget.label || widget.field} value={val} sub={`Field: ${widget.field}`} /><StatCard label="Total Targets" value={rows.length} sub="All rows in upload" /></div>;
-      }
-      case "breakdown_table": return <BreakdownTable counts={countByField(rows, widget.field)} />;
-      case "pipeline_table": return <PipelineTable rows={rows} cols={widget.selectedCols || cols} />;
-      case "delta_table": return prevUpload ? <DeltaTable prevRows={prevUpload.rows} currRows={rows} columns={cols} /> : <p style={{ color: T.muted, fontSize: 13 }}>No prior upload available for comparison.</p>;
-      case "text_block": return <p style={{ color: T.textSecondary, lineHeight: 1.8, whiteSpace: "pre-wrap", fontSize: 14 }}>{widget.text || "—"}</p>;
-      default: return null;
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BuySight — Pipeline Tracker</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body, #root { height: 100%; }
+    body {
+      background: #f7f8fa;
+      color: #111827;
+      font-family: 'Inter', sans-serif;
+      font-size: 14px;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
     }
-  };
-  return (
-    <Card style={{ marginBottom: 16, pageBreakInside: "avoid" }}>
-      {widget.label && (
-        <div style={{ marginBottom: 16, paddingBottom: 12, borderBottom: `1px solid ${T.border}` }}>
-          <h3 style={{ fontSize: 15, fontWeight: 600, color: T.navy }}>{widget.label}</h3>
-        </div>
-      )}
-      {renderContent()}
-    </Card>
-  );
-};
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: #f1f1f1; }
+    ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
+    input::placeholder { color: #9ca3af; }
+    textarea::placeholder { color: #9ca3af; }
+    @media print {
+      body { background: #fff !important; color: #111 !important; }
+      .no-print { display: none !important; }
+      .print-page { page-break-after: always; }
+      th { background: #f3f4f6 !important; }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
 
-const ReportView = ({ project, uploadIndex }) => {
-  const upload = project.uploads[uploadIndex];
-  const prevUpload = uploadIndex > 0 ? project.uploads[uploadIndex - 1] : null;
-  const template = project.template;
-  const allColumns = upload ? Object.keys(upload.rows[0] || {}) : [];
-  if (!template || !template.widgets?.length) {
-    return (
-      <div style={{ textAlign: "center", padding: "60px 0", color: T.muted, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10 }}>
-        <div style={{ fontSize: 26, marginBottom: 8 }}>📐</div>
-        <p style={{ fontWeight: 500, color: T.textSecondary }}>No template configured</p>
-        <p style={{ fontSize: 12, marginTop: 4 }}>Go to Template Builder to set up your report sections.</p>
+  <script type="text/babel">
+    const { useState, useRef } = React;
+
+    // ── Utility ─────────────────────────────────────────────────────────────────
+    const uid = () => Math.random().toString(36).slice(2, 9);
+    const fmt = (val) => (val === null || val === undefined || val === "") ? "—" : String(val);
+    const countByField = (rows, field) => {
+      const counts = {};
+      rows.forEach((r) => { const v = fmt(r[field]); counts[v] = (counts[v] || 0) + 1; });
+      return counts;
+    };
+
+    // ── Theme ────────────────────────────────────────────────────────────────────
+    const T = {
+      bg: "#f7f8fa", surface: "#ffffff", border: "#e4e7ed", borderLight: "#eef0f4",
+      navy: "#0f2044", navyLight: "#1a3460", blue: "#2563eb", blueLight: "#eff4ff",
+      text: "#111827", textSecondary: "#374151", muted: "#6b7280", mutedLight: "#9ca3af",
+      success: "#16a34a", successBg: "#f0fdf4", warning: "#d97706", warningBg: "#fffbeb",
+      danger: "#dc2626", dangerBg: "#fef2f2", accent: "#2563eb", accentBg: "#eff4ff",
+    };
+
+    // ── Shared Components ────────────────────────────────────────────────────────
+    const Btn = ({ children, onClick, variant = "primary", small, disabled, style }) => {
+      const base = {
+        display: "inline-flex", alignItems: "center", gap: 6,
+        padding: small ? "5px 11px" : "8px 16px", borderRadius: 6,
+        fontFamily: "'Inter', sans-serif", fontSize: small ? 12 : 13, fontWeight: 500,
+        cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.45 : 1,
+        border: "none", transition: "all 0.13s", letterSpacing: "0.01em", whiteSpace: "nowrap",
+      };
+      const variants = {
+        primary: { background: T.navy, color: "#fff" },
+        blue: { background: T.blue, color: "#fff" },
+        ghost: { background: "transparent", color: T.muted, border: `1px solid ${T.border}` },
+        danger: { background: T.dangerBg, color: T.danger, border: "1px solid #fca5a5" },
+        outline: { background: "transparent", color: T.navy, border: `1px solid ${T.border}` },
+      };
+      return <button style={{ ...base, ...variants[variant], ...style }} onClick={onClick} disabled={disabled}>{children}</button>;
+    };
+
+    const Tag = ({ children, color }) => {
+      const presets = {
+        blue: { bg: T.accentBg, text: T.blue }, green: { bg: T.successBg, text: T.success },
+        amber: { bg: T.warningBg, text: T.warning }, red: { bg: T.dangerBg, text: T.danger },
+        gray: { bg: "#f3f4f6", text: T.muted },
+      };
+      const p = presets[color] || presets.gray;
+      return (
+        <span style={{ display: "inline-flex", alignItems: "center", padding: "2px 8px", borderRadius: 20, fontSize: 11, fontWeight: 600, background: p.bg, color: p.text, letterSpacing: "0.03em", textTransform: "uppercase" }}>
+          {children}
+        </span>
+      );
+    };
+
+    const SectionTitle = ({ children, sub }) => (
+      <div style={{ marginBottom: 24 }}>
+        <h2 style={{ fontSize: 20, fontWeight: 700, color: T.navy, letterSpacing: "-0.02em" }}>{children}</h2>
+        {sub && <p style={{ color: T.muted, fontSize: 13, marginTop: 4 }}>{sub}</p>}
       </div>
     );
-  }
-  return (
-    <div>
-      <div className="no-print" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24 }}>
-        <div>
-          <h2 style={{ fontSize: 20, fontWeight: 700, color: T.navy, letterSpacing: "-0.02em" }}>{template.reportTitle}</h2>
-          <p style={{ color: T.muted, fontSize: 12, marginTop: 4 }}>{upload?.filename} · {upload?.rows.length} targets · {new Date(upload?.uploadedAt).toLocaleDateString()}</p>
+
+    const Card = ({ children, style }) => (
+      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: 24, ...style }}>
+        {children}
+      </div>
+    );
+
+    const FieldLabel = ({ children }) => (
+      <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: T.muted, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>
+        {children}
+      </label>
+    );
+
+    const Input = ({ value, onChange, placeholder, style }) => (
+      <input value={value} onChange={onChange} placeholder={placeholder}
+        style={{ background: "#fff", border: `1px solid ${T.border}`, borderRadius: 6, color: T.text, fontFamily: "'Inter', sans-serif", fontSize: 13, padding: "8px 12px", outline: "none", width: "100%", transition: "border-color 0.13s", ...style }}
+        onFocus={(e) => (e.target.style.borderColor = T.blue)}
+        onBlur={(e) => (e.target.style.borderColor = T.border)}
+      />
+    );
+
+    const Select = ({ value, onChange, children, style }) => (
+      <select value={value} onChange={onChange}
+        style={{ background: "#fff", border: `1px solid ${T.border}`, borderRadius: 6, color: T.text, fontFamily: "'Inter', sans-serif", fontSize: 13, padding: "7px 10px", outline: "none", cursor: "pointer", ...style }}>
+        {children}
+      </select>
+    );
+
+    // ── Upload Zone ──────────────────────────────────────────────────────────────
+    const UploadZone = ({ onParsed, label = "Drop an Excel or CSV file" }) => {
+      const [dragging, setDragging] = useState(false);
+      const [error, setError] = useState(null);
+      const fileRef = useRef();
+
+      const parse = (file) => {
+        setError(null);
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          try {
+            const wb = XLSX.read(e.target.result, { type: "binary" });
+            const ws = wb.Sheets[wb.SheetNames[0]];
+            const data = XLSX.utils.sheet_to_json(ws, { defval: "" });
+            if (!data.length) { setError("No data found in file."); return; }
+            onParsed(data, file.name);
+          } catch { setError("Could not parse file. Please use .xlsx or .csv."); }
+        };
+        reader.readAsBinaryString(file);
+      };
+
+      return (
+        <div
+          onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={(e) => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files[0]; if (f) parse(f); }}
+          onClick={() => fileRef.current.click()}
+          style={{ border: `2px dashed ${dragging ? T.blue : T.border}`, borderRadius: 10, padding: "36px 24px", textAlign: "center", cursor: "pointer", transition: "all 0.18s", background: dragging ? T.accentBg : T.bg }}
+        >
+          <div style={{ fontSize: 26, marginBottom: 8 }}>📂</div>
+          <p style={{ color: T.textSecondary, fontWeight: 500, fontSize: 14 }}>{label}</p>
+          <p style={{ color: T.mutedLight, fontSize: 12, marginTop: 4 }}>Click to browse or drag and drop · .xlsx / .csv</p>
+          {error && <p style={{ color: T.danger, fontSize: 12, marginTop: 10, fontWeight: 500 }}>{error}</p>}
+          <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" style={{ display: "none" }} onChange={(e) => e.target.files[0] && parse(e.target.files[0])} />
         </div>
-        <Btn onClick={() => window.print()} variant="blue">⬇ Export PDF</Btn>
-      </div>
-      {template.widgets.map((w) => <ReportWidget key={w.id} widget={w} upload={upload} prevUpload={prevUpload} allColumns={allColumns} />)}
-    </div>
-  );
-};
+      );
+    };
 
-// ─── Project Detail ───────────────────────────────────────────────────────────
+    // ── Template Builder ─────────────────────────────────────────────────────────
+    const WIDGET_TYPES = [
+      { value: "stat_card", label: "Stat Card (count / sum)" },
+      { value: "breakdown_table", label: "Breakdown Table (group by field)" },
+      { value: "pipeline_table", label: "Full Pipeline Table" },
+      { value: "delta_table", label: "Delta Table (changes vs prior upload)" },
+      { value: "text_block", label: "Text / Commentary Block" },
+    ];
 
-const ProjectDetail = ({ project, onUpdate, onBack }) => {
-  const [activeTab, setActiveTab] = useState("overview");
-  const [selectedUploadIdx, setSelectedUploadIdx] = useState(project.uploads.length - 1);
+    const TemplateBuilder = ({ project, onSave }) => {
+      const [widgets, setWidgets] = useState(project.template?.widgets || []);
+      const [reportTitle, setReportTitle] = useState(project.template?.reportTitle || `${project.name} — Pipeline Report`);
+      const columns = project.uploads[0] ? Object.keys(project.uploads[0].rows[0] || {}) : [];
 
-  const handleNewUpload = (rows, filename) => {
-    const updated = { ...project, uploads: [...project.uploads, { id: uid(), rows, filename, uploadedAt: Date.now() }] };
-    onUpdate(updated);
-    setSelectedUploadIdx(updated.uploads.length - 1);
-  };
+      const addWidget = () => setWidgets([...widgets, { id: uid(), type: "stat_card", label: "", field: columns[0] || "", statMode: "count" }]);
+      const updateWidget = (id, changes) => setWidgets(widgets.map((w) => (w.id === id ? { ...w, ...changes } : w)));
+      const removeWidget = (id) => setWidgets(widgets.filter((w) => w.id !== id));
+      const moveWidget = (id, dir) => {
+        const idx = widgets.findIndex((w) => w.id === id);
+        const next = [...widgets];
+        const target = idx + dir;
+        if (target < 0 || target >= next.length) return;
+        [next[idx], next[target]] = [next[target], next[idx]];
+        setWidgets(next);
+      };
 
-  const handleTemplateSave = (template) => { onUpdate({ ...project, template }); setActiveTab("report"); };
-
-  const tabs = [{ key: "overview", label: "Uploads" }, { key: "template", label: "Template Builder" }, { key: "report", label: "Report" }];
-
-  return (
-    <div>
-      <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 28 }}>
-        <button onClick={onBack} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 6, color: T.muted, cursor: "pointer", fontSize: 16, width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center" }}>←</button>
+      return (
         <div>
-          <h1 style={{ fontSize: 22, fontWeight: 700, color: T.navy, letterSpacing: "-0.02em" }}>{project.name}</h1>
-          <p style={{ color: T.muted, fontSize: 12, marginTop: 2 }}>{project.uploads.length} upload{project.uploads.length !== 1 ? "s" : ""} · Created {new Date(project.createdAt).toLocaleDateString()}</p>
-        </div>
-      </div>
+          <SectionTitle sub="Configure the sections that will appear in your generated reports.">Template Builder</SectionTitle>
+          <Card style={{ marginBottom: 20 }}>
+            <FieldLabel>Report Title</FieldLabel>
+            <Input value={reportTitle} onChange={(e) => setReportTitle(e.target.value)} placeholder="Report title..." />
+          </Card>
 
-      <div className="no-print" style={{ display: "flex", gap: 2, marginBottom: 28, borderBottom: `1px solid ${T.border}` }}>
-        {tabs.map((t) => (
-          <button key={t.key} onClick={() => setActiveTab(t.key)} style={{ background: "none", border: "none", borderBottom: activeTab === t.key ? `2px solid ${T.navy}` : "2px solid transparent", color: activeTab === t.key ? T.navy : T.muted, cursor: "pointer", fontFamily: "'Inter', sans-serif", fontSize: 13, fontWeight: activeTab === t.key ? 600 : 400, padding: "10px 16px", marginBottom: -1, transition: "all 0.13s" }}>
-            {t.label}
-          </button>
-        ))}
-      </div>
+          {widgets.length === 0 && (
+            <div style={{ textAlign: "center", padding: "40px 0", color: T.muted, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, marginBottom: 16 }}>
+              <div style={{ fontSize: 26, marginBottom: 8 }}>📐</div>
+              <p style={{ fontWeight: 500 }}>No sections yet — add your first below.</p>
+            </div>
+          )}
 
-      {activeTab === "overview" && (
-        <div>
-          <SectionTitle sub="Upload new versions of your target list. Headers must remain consistent across uploads.">Pipeline Uploads</SectionTitle>
-          <div style={{ marginBottom: 24 }}><UploadZone onParsed={handleNewUpload} label="Upload updated target list (.xlsx / .csv)" /></div>
-          {project.uploads.length === 0 && <p style={{ color: T.muted, textAlign: "center", padding: 40 }}>No uploads yet.</p>}
-          {project.uploads.map((u, i) => (
-            <Card key={u.id} style={{ marginBottom: 10, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                <div style={{ width: 36, height: 36, borderRadius: 6, background: T.accentBg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }}>📄</div>
-                <div>
-                  <div style={{ fontWeight: 600, color: T.text, fontSize: 13 }}>{u.filename}</div>
-                  <div style={{ color: T.muted, fontSize: 12, marginTop: 1 }}>{u.rows.length} rows · {Object.keys(u.rows[0] || {}).length} columns · {new Date(u.uploadedAt).toLocaleString()}</div>
+          {widgets.map((w, i) => (
+            <Card key={w.id} style={{ marginBottom: 10 }}>
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                    <div style={{ flex: 1, minWidth: 160 }}>
+                      <FieldLabel>Section Label</FieldLabel>
+                      <Input value={w.label} onChange={(e) => updateWidget(w.id, { label: e.target.value })} placeholder="e.g. Status Breakdown" />
+                    </div>
+                    <div style={{ flex: 1, minWidth: 180 }}>
+                      <FieldLabel>Widget Type</FieldLabel>
+                      <Select value={w.type} onChange={(e) => updateWidget(w.id, { type: e.target.value })} style={{ width: "100%" }}>
+                        {WIDGET_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+                      </Select>
+                    </div>
+                    {(w.type === "stat_card" || w.type === "breakdown_table") && (
+                      <div style={{ flex: 1, minWidth: 160 }}>
+                        <FieldLabel>Field</FieldLabel>
+                        <Select value={w.field} onChange={(e) => updateWidget(w.id, { field: e.target.value })} style={{ width: "100%" }}>
+                          {columns.map((c) => <option key={c} value={c}>{c}</option>)}
+                        </Select>
+                      </div>
+                    )}
+                    {w.type === "stat_card" && (
+                      <div style={{ flex: 1, minWidth: 140 }}>
+                        <FieldLabel>Aggregation</FieldLabel>
+                        <Select value={w.statMode || "count"} onChange={(e) => updateWidget(w.id, { statMode: e.target.value })} style={{ width: "100%" }}>
+                          <option value="count">Count (non-empty)</option>
+                          <option value="total">Total Rows</option>
+                          <option value="unique">Unique Values</option>
+                        </Select>
+                      </div>
+                    )}
+                    {w.type === "pipeline_table" && (
+                      <div style={{ flex: 2, minWidth: 200 }}>
+                        <FieldLabel>Columns to Show</FieldLabel>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 2 }}>
+                          {columns.map((c) => (
+                            <label key={c} style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", fontSize: 12, color: T.textSecondary }}>
+                              <input type="checkbox"
+                                checked={(w.selectedCols || columns).includes(c)}
+                                onChange={(e) => {
+                                  const prev = w.selectedCols || columns;
+                                  const next = e.target.checked ? [...prev, c] : prev.filter((x) => x !== c);
+                                  updateWidget(w.id, { selectedCols: next });
+                                }}
+                              /> {c}
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {w.type === "text_block" && (
+                      <div style={{ flex: 2, minWidth: 200 }}>
+                        <FieldLabel>Commentary</FieldLabel>
+                        <textarea value={w.text || ""} onChange={(e) => updateWidget(w.id, { text: e.target.value })} placeholder="Enter commentary or notes..."
+                          style={{ background: "#fff", border: `1px solid ${T.border}`, borderRadius: 6, color: T.text, fontFamily: "'Inter', sans-serif", fontSize: 13, padding: "8px 12px", width: "100%", minHeight: 80, resize: "vertical", outline: "none" }} />
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                {i === 0 && <Tag color="gray">Baseline</Tag>}
-                {i === project.uploads.length - 1 && i > 0 && <Tag color="blue">Latest</Tag>}
-                <Btn small variant="outline" onClick={() => { setSelectedUploadIdx(i); setActiveTab("report"); }}>View Report</Btn>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4, paddingTop: 20 }}>
+                  <Btn small variant="ghost" onClick={() => moveWidget(w.id, -1)} disabled={i === 0}>↑</Btn>
+                  <Btn small variant="ghost" onClick={() => moveWidget(w.id, 1)} disabled={i === widgets.length - 1}>↓</Btn>
+                  <Btn small variant="danger" onClick={() => removeWidget(w.id)}>✕</Btn>
+                </div>
               </div>
             </Card>
           ))}
-        </div>
-      )}
 
-      {activeTab === "template" && (
-        project.uploads.length === 0
-          ? <div style={{ textAlign: "center", padding: "60px 0", color: T.muted }}><p>Upload a target list first to access the template builder.</p></div>
-          : <TemplateBuilder project={project} onSave={handleTemplateSave} />
-      )}
-
-      {activeTab === "report" && (
-        project.uploads.length === 0
-          ? <div style={{ textAlign: "center", padding: "60px 0", color: T.muted }}><p>No uploads yet. Upload a target list to generate reports.</p></div>
-          : (
-            <div>
-              {project.uploads.length > 1 && (
-                <div className="no-print" style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 24, padding: "14px 18px", background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8 }}>
-                  <span style={{ color: T.muted, fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em" }}>Viewing Upload</span>
-                  <Select value={selectedUploadIdx} onChange={(e) => setSelectedUploadIdx(Number(e.target.value))}>
-                    {project.uploads.map((u, i) => <option key={u.id} value={i}>{u.filename} — {new Date(u.uploadedAt).toLocaleDateString()}</option>)}
-                  </Select>
-                </div>
-              )}
-              <ReportView project={project} uploadIndex={selectedUploadIdx} />
-            </div>
-          )
-      )}
-    </div>
-  );
-};
-
-// ─── Projects Home ────────────────────────────────────────────────────────────
-
-const ProjectsHome = ({ projects, onSelect, onCreate }) => {
-  const [newName, setNewName] = useState("");
-  const [creating, setCreating] = useState(false);
-
-  return (
-    <div>
-      <div style={{ marginBottom: 32 }}>
-        <h2 style={{ fontSize: 20, fontWeight: 700, color: T.navy, letterSpacing: "-0.02em" }}>Projects</h2>
-        <p style={{ color: T.muted, fontSize: 13, marginTop: 4 }}>Manage your active deal origination searches and pipeline tracking projects.</p>
-      </div>
-
-      {projects.length === 0 && (
-        <div style={{ textAlign: "center", padding: "70px 0", color: T.muted, background: T.surface, border: `1px dashed ${T.border}`, borderRadius: 12, marginBottom: 24 }}>
-          <div style={{ fontSize: 34, marginBottom: 12 }}>📋</div>
-          <p style={{ fontWeight: 600, color: T.textSecondary, marginBottom: 4 }}>No projects yet</p>
-          <p style={{ fontSize: 12 }}>Create your first project to start tracking a search mandate.</p>
-        </div>
-      )}
-
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(290px, 1fr))", gap: 14, marginBottom: 24 }}>
-        {projects.map((p) => (
-          <div key={p.id} onClick={() => onSelect(p.id)}
-            style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: 22, cursor: "pointer", transition: "box-shadow 0.15s, border-color 0.15s, transform 0.15s" }}
-            onMouseEnter={(e) => { e.currentTarget.style.borderColor = T.navy; e.currentTarget.style.boxShadow = "0 4px 16px rgba(15,32,68,0.08)"; e.currentTarget.style.transform = "translateY(-2px)"; }}
-            onMouseLeave={(e) => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.boxShadow = "none"; e.currentTarget.style.transform = ""; }}
-          >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
-              <h3 style={{ fontSize: 15, color: T.navy, fontWeight: 700, lineHeight: 1.3 }}>{p.name}</h3>
-              {p.uploads.length > 0 && <Tag color="gray">{p.uploads.length} upload{p.uploads.length !== 1 ? "s" : ""}</Tag>}
-            </div>
-            <p style={{ color: T.mutedLight, fontSize: 12 }}>Created {new Date(p.createdAt).toLocaleDateString()}</p>
-            {p.uploads.length > 0 && <p style={{ color: T.muted, fontSize: 12, marginTop: 3 }}>Last: {new Date(p.uploads[p.uploads.length - 1].uploadedAt).toLocaleDateString()} · {p.uploads[p.uploads.length - 1].rows.length} targets</p>}
-            {p.template?.widgets?.length > 0 && <div style={{ marginTop: 12 }}><Tag color="blue">Template configured</Tag></div>}
+          <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
+            <Btn variant="ghost" onClick={addWidget}>+ Add Section</Btn>
+            <Btn onClick={() => onSave({ reportTitle, widgets })}>Save Template</Btn>
           </div>
-        ))}
-      </div>
-
-      {creating ? (
-        <Card style={{ maxWidth: 420 }}>
-          <FieldLabel>Project Name</FieldLabel>
-          <Input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="e.g. Industrial Services — Q2 2025" />
-          <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
-            <Btn onClick={() => { if (newName.trim()) { onCreate(newName.trim()); setNewName(""); setCreating(false); } }} disabled={!newName.trim()}>Create Project</Btn>
-            <Btn variant="ghost" onClick={() => setCreating(false)}>Cancel</Btn>
-          </div>
-        </Card>
-      ) : (
-        <Btn onClick={() => setCreating(true)}>+ New Project</Btn>
-      )}
-    </div>
-  );
-};
-
-// ─── App Shell ────────────────────────────────────────────────────────────────
-
-export default function App() {
-  const [projects, setProjects] = useState([]);
-  const [activeProjectId, setActiveProjectId] = useState(null);
-  const activeProject = projects.find((p) => p.id === activeProjectId);
-  const createProject = (name) => {
-    const p = { id: uid(), name, createdAt: Date.now(), uploads: [], template: null };
-    setProjects([...projects, p]);
-    setActiveProjectId(p.id);
-  };
-  const updateProject = (updated) => setProjects(projects.map((p) => (p.id === updated.id ? updated : p)));
-
-  return (
-    <>
-      <style>{GLOBAL_STYLE}</style>
-
-      {/* Top nav */}
-      <div className="no-print" style={{ borderBottom: `1px solid ${T.border}`, padding: "0 32px", display: "flex", alignItems: "center", gap: 12, height: 54, background: "#fff", position: "sticky", top: 0, zIndex: 100, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
-        <button onClick={() => setActiveProjectId(null)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 9, padding: 0 }}>
-          <div style={{ width: 28, height: 28, borderRadius: 6, background: T.navy, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, color: "#fff", fontWeight: 700, fontFamily: "'Inter', sans-serif", letterSpacing: "-0.02em" }}>
-            BS
-          </div>
-          <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 15, color: T.navy, fontWeight: 700, letterSpacing: "-0.02em" }}>BuySight</span>
-        </button>
-
-        <span style={{ color: T.border, fontSize: 16, margin: "0 2px" }}>|</span>
-        <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: T.muted }}>Pipeline Tracker</span>
-
-        {activeProject && (
-          <>
-            <span style={{ color: T.mutedLight, margin: "0 2px" }}>›</span>
-            <span style={{ color: T.textSecondary, fontSize: 13, fontWeight: 500 }}>{activeProject.name}</span>
-          </>
-        )}
-
-        <div style={{ marginLeft: "auto" }}>
-          <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: T.mutedLight }}>
-            {projects.length} project{projects.length !== 1 ? "s" : ""}
-          </span>
         </div>
-      </div>
+      );
+    };
 
-      {/* Content */}
-      <div style={{ maxWidth: 1080, margin: "0 auto", padding: "40px 32px" }}>
-        {!activeProject
-          ? <ProjectsHome projects={projects} onSelect={setActiveProjectId} onCreate={createProject} />
-          : <ProjectDetail project={activeProject} onUpdate={updateProject} onBack={() => setActiveProjectId(null)} />
+    // ── Report Renderer ──────────────────────────────────────────────────────────
+    const thStyle = {
+      padding: "9px 14px", textAlign: "left", fontSize: 11, textTransform: "uppercase",
+      letterSpacing: "0.07em", color: T.muted, borderBottom: `1px solid ${T.border}`,
+      fontFamily: "'Inter', sans-serif", fontWeight: 600, background: T.bg,
+    };
+    const tdStyle = {
+      padding: "9px 14px", fontSize: 13, color: T.textSecondary,
+      fontFamily: "'Inter', sans-serif", borderBottom: `1px solid ${T.borderLight}`,
+    };
+
+    const StatCard = ({ label, value, sub }) => (
+      <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "18px 22px", minWidth: 160, flex: 1 }}>
+        <div style={{ fontSize: 11, fontWeight: 600, color: T.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>{label}</div>
+        <div style={{ fontSize: 34, fontFamily: "'IBM Plex Mono', monospace", fontWeight: 500, color: T.navy, lineHeight: 1 }}>{value}</div>
+        {sub && <div style={{ fontSize: 11, color: T.mutedLight, marginTop: 6 }}>{sub}</div>}
+      </div>
+    );
+
+    const BreakdownTable = ({ counts }) => {
+      const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+      const total = entries.reduce((s, [, v]) => s + v, 0);
+      return (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr>
+                <th style={thStyle}>Value</th>
+                <th style={{ ...thStyle, textAlign: "right" }}>Count</th>
+                <th style={{ ...thStyle, textAlign: "right" }}>Share</th>
+                <th style={{ ...thStyle, width: 140 }}>Distribution</th>
+              </tr>
+            </thead>
+            <tbody>
+              {entries.map(([v, c]) => (
+                <tr key={v}>
+                  <td style={tdStyle}>{v}</td>
+                  <td style={{ ...tdStyle, textAlign: "right", fontFamily: "'IBM Plex Mono', monospace", fontWeight: 500, color: T.navy }}>{c}</td>
+                  <td style={{ ...tdStyle, textAlign: "right", color: T.muted, fontFamily: "'IBM Plex Mono', monospace" }}>{((c / total) * 100).toFixed(1)}%</td>
+                  <td style={tdStyle}>
+                    <div style={{ background: T.borderLight, borderRadius: 3, height: 6, overflow: "hidden" }}>
+                      <div style={{ background: T.blue, height: "100%", width: `${(c / total) * 100}%`, borderRadius: 3 }} />
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+    };
+
+    const PipelineTable = ({ rows, cols }) => (
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead><tr>{cols.map((c) => <th key={c} style={thStyle}>{c}</th>)}</tr></thead>
+          <tbody>
+            {rows.map((row, i) => (
+              <tr key={i} style={{ background: i % 2 === 0 ? "#fff" : T.bg }}>
+                {cols.map((c) => <td key={c} style={tdStyle}>{fmt(row[c])}</td>)}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+
+    const DeltaTable = ({ prevRows, currRows, columns }) => {
+      const idCol = columns[0];
+      const prevMap = {}; prevRows.forEach((r) => { prevMap[r[idCol]] = r; });
+      const currMap = {}; currRows.forEach((r) => { currMap[r[idCol]] = r; });
+      const allIds = [...new Set([...Object.keys(prevMap), ...Object.keys(currMap)])];
+      const changes = [];
+      allIds.forEach((id) => {
+        const p = prevMap[id]; const c = currMap[id];
+        if (!p) { changes.push({ id, type: "added", row: c }); return; }
+        if (!c) { changes.push({ id, type: "removed", row: p }); return; }
+        columns.filter((col) => String(p[col]) !== String(c[col])).forEach((col) => changes.push({ id, type: "changed", col, from: p[col], to: c[col] }));
+      });
+      if (!changes.length) return <p style={{ color: T.muted, fontSize: 13, padding: "20px 0" }}>No changes detected between uploads.</p>;
+      const added = changes.filter((c) => c.type === "added");
+      const removed = changes.filter((c) => c.type === "removed");
+      const changed = changes.filter((c) => c.type === "changed");
+      return (
+        <div>
+          <div style={{ display: "flex", gap: 14, marginBottom: 24, flexWrap: "wrap" }}>
+            <StatCard label="Added" value={added.length} sub="New targets" />
+            <StatCard label="Removed" value={removed.length} sub="Dropped targets" />
+            <StatCard label="Updated" value={[...new Set(changed.map((c) => c.id))].length} sub="Field changes" />
+          </div>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr>
+                <th style={thStyle}>{idCol}</th>
+                <th style={thStyle}>Change</th>
+                <th style={thStyle}>Field</th>
+                <th style={thStyle}>Previous</th>
+                <th style={thStyle}>Current</th>
+              </tr>
+            </thead>
+            <tbody>
+              {changes.map((c, i) => (
+                <tr key={i} style={{ background: i % 2 === 0 ? "#fff" : T.bg }}>
+                  <td style={{ ...tdStyle, fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: T.navy, fontWeight: 500 }}>{fmt(c.id)}</td>
+                  <td style={tdStyle}><Tag color={c.type === "added" ? "green" : c.type === "removed" ? "red" : "amber"}>{c.type}</Tag></td>
+                  <td style={{ ...tdStyle, color: T.muted }}>{c.col || "—"}</td>
+                  <td style={{ ...tdStyle, color: c.type === "changed" ? T.danger : T.mutedLight, textDecoration: c.type === "changed" ? "line-through" : "none" }}>{c.type === "changed" ? fmt(c.from) : "—"}</td>
+                  <td style={{ ...tdStyle, color: c.type === "removed" ? T.danger : T.success, fontWeight: 500 }}>{c.type === "changed" ? fmt(c.to) : c.type === "added" ? "New" : "Removed"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+    };
+
+    const ReportWidget = ({ widget, upload, prevUpload, allColumns }) => {
+      const rows = upload.rows;
+      const cols = allColumns || Object.keys(rows[0] || {});
+      const renderContent = () => {
+        switch (widget.type) {
+          case "stat_card": {
+            let val;
+            if (widget.statMode === "count") val = rows.filter((r) => r[widget.field] !== "" && r[widget.field] !== null && r[widget.field] !== undefined).length;
+            else if (widget.statMode === "total") val = rows.length;
+            else if (widget.statMode === "unique") val = new Set(rows.map((r) => r[widget.field])).size;
+            return <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}><StatCard label={widget.label || widget.field} value={val} sub={`Field: ${widget.field}`} /><StatCard label="Total Targets" value={rows.length} sub="All rows in upload" /></div>;
+          }
+          case "breakdown_table": return <BreakdownTable counts={countByField(rows, widget.field)} />;
+          case "pipeline_table": return <PipelineTable rows={rows} cols={widget.selectedCols || cols} />;
+          case "delta_table": return prevUpload ? <DeltaTable prevRows={prevUpload.rows} currRows={rows} columns={cols} /> : <p style={{ color: T.muted, fontSize: 13 }}>No prior upload available for comparison.</p>;
+          case "text_block": return <p style={{ color: T.textSecondary, lineHeight: 1.8, whiteSpace: "pre-wrap", fontSize: 14 }}>{widget.text || "—"}</p>;
+          default: return null;
         }
-      </div>
-    </>
-  );
-}
+      };
+      return (
+        <Card style={{ marginBottom: 16, pageBreakInside: "avoid" }}>
+          {widget.label && (
+            <div style={{ marginBottom: 16, paddingBottom: 12, borderBottom: `1px solid ${T.border}` }}>
+              <h3 style={{ fontSize: 15, fontWeight: 600, color: T.navy }}>{widget.label}</h3>
+            </div>
+          )}
+          {renderContent()}
+        </Card>
+      );
+    };
+
+    const ReportView = ({ project, uploadIndex }) => {
+      const upload = project.uploads[uploadIndex];
+      const prevUpload = uploadIndex > 0 ? project.uploads[uploadIndex - 1] : null;
+      const template = project.template;
+      const allColumns = upload ? Object.keys(upload.rows[0] || {}) : [];
+      if (!template || !template.widgets?.length) {
+        return (
+          <div style={{ textAlign: "center", padding: "60px 0", color: T.muted, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10 }}>
+            <div style={{ fontSize: 26, marginBottom: 8 }}>📐</div>
+            <p style={{ fontWeight: 500, color: T.textSecondary }}>No template configured</p>
+            <p style={{ fontSize: 12, marginTop: 4 }}>Go to Template Builder to set up your report sections.</p>
+          </div>
+        );
+      }
+      return (
+        <div>
+          <div className="no-print" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24 }}>
+            <div>
+              <h2 style={{ fontSize: 20, fontWeight: 700, color: T.navy, letterSpacing: "-0.02em" }}>{template.reportTitle}</h2>
+              <p style={{ color: T.muted, fontSize: 12, marginTop: 4 }}>{upload?.filename} · {upload?.rows.length} targets · {new Date(upload?.uploadedAt).toLocaleDateString()}</p>
+            </div>
+            <Btn onClick={() => window.print()} variant="blue">⬇ Export PDF</Btn>
+          </div>
+          {template.widgets.map((w) => <ReportWidget key={w.id} widget={w} upload={upload} prevUpload={prevUpload} allColumns={allColumns} />)}
+        </div>
+      );
+    };
+
+    // ── Project Detail ───────────────────────────────────────────────────────────
+    const ProjectDetail = ({ project, onUpdate, onBack }) => {
+      const [activeTab, setActiveTab] = useState("overview");
+      const [selectedUploadIdx, setSelectedUploadIdx] = useState(Math.max(0, project.uploads.length - 1));
+
+      const handleNewUpload = (rows, filename) => {
+        const updated = { ...project, uploads: [...project.uploads, { id: uid(), rows, filename, uploadedAt: Date.now() }] };
+        onUpdate(updated);
+        setSelectedUploadIdx(updated.uploads.length - 1);
+      };
+      const handleTemplateSave = (template) => { onUpdate({ ...project, template }); setActiveTab("report"); };
+      const tabs = [{ key: "overview", label: "Uploads" }, { key: "template", label: "Template Builder" }, { key: "report", label: "Report" }];
+
+      return (
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 28 }}>
+            <button onClick={onBack} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 6, color: T.muted, cursor: "pointer", fontSize: 16, width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center" }}>←</button>
+            <div>
+              <h1 style={{ fontSize: 22, fontWeight: 700, color: T.navy, letterSpacing: "-0.02em" }}>{project.name}</h1>
+              <p style={{ color: T.muted, fontSize: 12, marginTop: 2 }}>{project.uploads.length} upload{project.uploads.length !== 1 ? "s" : ""} · Created {new Date(project.createdAt).toLocaleDateString()}</p>
+            </div>
+          </div>
+
+          <div className="no-print" style={{ display: "flex", gap: 2, marginBottom: 28, borderBottom: `1px solid ${T.border}` }}>
+            {tabs.map((t) => (
+              <button key={t.key} onClick={() => setActiveTab(t.key)}
+                style={{ background: "none", border: "none", borderBottom: activeTab === t.key ? `2px solid ${T.navy}` : "2px solid transparent", color: activeTab === t.key ? T.navy : T.muted, cursor: "pointer", fontFamily: "'Inter', sans-serif", fontSize: 13, fontWeight: activeTab === t.key ? 600 : 400, padding: "10px 16px", marginBottom: -1, transition: "all 0.13s" }}>
+                {t.label}
+              </button>
+            ))}
+          </div>
+
+          {activeTab === "overview" && (
+            <div>
+              <SectionTitle sub="Upload new versions of your target list. Headers must remain consistent across uploads.">Pipeline Uploads</SectionTitle>
+              <div style={{ marginBottom: 24 }}><UploadZone onParsed={handleNewUpload} label="Upload updated target list (.xlsx / .csv)" /></div>
+              {project.uploads.length === 0 && <p style={{ color: T.muted, textAlign: "center", padding: 40 }}>No uploads yet.</p>}
+              {project.uploads.map((u, i) => (
+                <Card key={u.id} style={{ marginBottom: 10, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                    <div style={{ width: 36, height: 36, borderRadius: 6, background: T.accentBg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }}>📄</div>
+                    <div>
+                      <div style={{ fontWeight: 600, color: T.text, fontSize: 13 }}>{u.filename}</div>
+                      <div style={{ color: T.muted, fontSize: 12, marginTop: 1 }}>{u.rows.length} rows · {Object.keys(u.rows[0] || {}).length} columns · {new Date(u.uploadedAt).toLocaleString()}</div>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    {i === 0 && <Tag color="gray">Baseline</Tag>}
+                    {i === project.uploads.length - 1 && i > 0 && <Tag color="blue">Latest</Tag>}
+                    <Btn small variant="outline" onClick={() => { setSelectedUploadIdx(i); setActiveTab("report"); }}>View Report</Btn>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          )}
+
+          {activeTab === "template" && (
+            project.uploads.length === 0
+              ? <div style={{ textAlign: "center", padding: "60px 0", color: T.muted }}><p>Upload a target list first to access the template builder.</p></div>
+              : <TemplateBuilder project={project} onSave={handleTemplateSave} />
+          )}
+
+          {activeTab === "report" && (
+            project.uploads.length === 0
+              ? <div style={{ textAlign: "center", padding: "60px 0", color: T.muted }}><p>No uploads yet. Upload a target list to generate reports.</p></div>
+              : (
+                <div>
+                  {project.uploads.length > 1 && (
+                    <div className="no-print" style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 24, padding: "14px 18px", background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8 }}>
+                      <span style={{ color: T.muted, fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em" }}>Viewing Upload</span>
+                      <Select value={selectedUploadIdx} onChange={(e) => setSelectedUploadIdx(Number(e.target.value))}>
+                        {project.uploads.map((u, i) => <option key={u.id} value={i}>{u.filename} — {new Date(u.uploadedAt).toLocaleDateString()}</option>)}
+                      </Select>
+                    </div>
+                  )}
+                  <ReportView project={project} uploadIndex={selectedUploadIdx} />
+                </div>
+              )
+          )}
+        </div>
+      );
+    };
+
+    // ── Projects Home ────────────────────────────────────────────────────────────
+    const ProjectsHome = ({ projects, onSelect, onCreate }) => {
+      const [newName, setNewName] = useState("");
+      const [creating, setCreating] = useState(false);
+      return (
+        <div>
+          <div style={{ marginBottom: 32 }}>
+            <h2 style={{ fontSize: 20, fontWeight: 700, color: T.navy, letterSpacing: "-0.02em" }}>Projects</h2>
+            <p style={{ color: T.muted, fontSize: 13, marginTop: 4 }}>Manage your active deal origination searches and pipeline tracking projects.</p>
+          </div>
+
+          {projects.length === 0 && (
+            <div style={{ textAlign: "center", padding: "70px 0", color: T.muted, background: T.surface, border: `1px dashed ${T.border}`, borderRadius: 12, marginBottom: 24 }}>
+              <div style={{ fontSize: 34, marginBottom: 12 }}>📋</div>
+              <p style={{ fontWeight: 600, color: T.textSecondary, marginBottom: 4 }}>No projects yet</p>
+              <p style={{ fontSize: 12 }}>Create your first project to start tracking a search mandate.</p>
+            </div>
+          )}
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(290px, 1fr))", gap: 14, marginBottom: 24 }}>
+            {projects.map((p) => (
+              <div key={p.id} onClick={() => onSelect(p.id)}
+                style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: 22, cursor: "pointer", transition: "box-shadow 0.15s, border-color 0.15s, transform 0.15s" }}
+                onMouseEnter={(e) => { e.currentTarget.style.borderColor = T.navy; e.currentTarget.style.boxShadow = "0 4px 16px rgba(15,32,68,0.08)"; e.currentTarget.style.transform = "translateY(-2px)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.boxShadow = "none"; e.currentTarget.style.transform = ""; }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+                  <h3 style={{ fontSize: 15, color: T.navy, fontWeight: 700, lineHeight: 1.3 }}>{p.name}</h3>
+                  {p.uploads.length > 0 && <Tag color="gray">{p.uploads.length} upload{p.uploads.length !== 1 ? "s" : ""}</Tag>}
+                </div>
+                <p style={{ color: T.mutedLight, fontSize: 12 }}>Created {new Date(p.createdAt).toLocaleDateString()}</p>
+                {p.uploads.length > 0 && <p style={{ color: T.muted, fontSize: 12, marginTop: 3 }}>Last: {new Date(p.uploads[p.uploads.length - 1].uploadedAt).toLocaleDateString()} · {p.uploads[p.uploads.length - 1].rows.length} targets</p>}
+                {p.template?.widgets?.length > 0 && <div style={{ marginTop: 12 }}><Tag color="blue">Template configured</Tag></div>}
+              </div>
+            ))}
+          </div>
+
+          {creating ? (
+            <Card style={{ maxWidth: 420 }}>
+              <FieldLabel>Project Name</FieldLabel>
+              <Input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="e.g. Industrial Services — Q2 2025" />
+              <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+                <Btn onClick={() => { if (newName.trim()) { onCreate(newName.trim()); setNewName(""); setCreating(false); } }} disabled={!newName.trim()}>Create Project</Btn>
+                <Btn variant="ghost" onClick={() => setCreating(false)}>Cancel</Btn>
+              </div>
+            </Card>
+          ) : (
+            <Btn onClick={() => setCreating(true)}>+ New Project</Btn>
+          )}
+        </div>
+      );
+    };
+
+    // ── App Shell ────────────────────────────────────────────────────────────────
+    function App() {
+      const [projects, setProjects] = useState([]);
+      const [activeProjectId, setActiveProjectId] = useState(null);
+      const activeProject = projects.find((p) => p.id === activeProjectId);
+      const createProject = (name) => {
+        const p = { id: uid(), name, createdAt: Date.now(), uploads: [], template: null };
+        setProjects([...projects, p]);
+        setActiveProjectId(p.id);
+      };
+      const updateProject = (updated) => setProjects(projects.map((p) => (p.id === updated.id ? updated : p)));
+
+      return (
+        <div>
+          {/* Top nav */}
+          <div className="no-print" style={{ borderBottom: `1px solid ${T.border}`, padding: "0 32px", display: "flex", alignItems: "center", gap: 12, height: 54, background: "#fff", position: "sticky", top: 0, zIndex: 100, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+            <button onClick={() => setActiveProjectId(null)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 9, padding: 0 }}>
+              <div style={{ width: 28, height: 28, borderRadius: 6, background: T.navy, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, color: "#fff", fontWeight: 700, fontFamily: "'Inter', sans-serif", letterSpacing: "-0.02em" }}>
+                BS
+              </div>
+              <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 15, color: T.navy, fontWeight: 700, letterSpacing: "-0.02em" }}>BuySight</span>
+            </button>
+            <span style={{ color: T.border, fontSize: 16, margin: "0 2px" }}>|</span>
+            <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: T.muted }}>Pipeline Tracker</span>
+            {activeProject && (
+              <React.Fragment>
+                <span style={{ color: T.mutedLight, margin: "0 2px" }}>›</span>
+                <span style={{ color: T.textSecondary, fontSize: 13, fontWeight: 500 }}>{activeProject.name}</span>
+              </React.Fragment>
+            )}
+            <div style={{ marginLeft: "auto" }}>
+              <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: T.mutedLight }}>
+                {projects.length} project{projects.length !== 1 ? "s" : ""}
+              </span>
+            </div>
+          </div>
+
+          {/* Content */}
+          <div style={{ maxWidth: 1080, margin: "0 auto", padding: "40px 32px" }}>
+            {!activeProject
+              ? <ProjectsHome projects={projects} onSelect={setActiveProjectId} onCreate={createProject} />
+              : <ProjectDetail project={activeProject} onUpdate={updateProject} onBack={() => setActiveProjectId(null)} />
+            }
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
