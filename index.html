@@ -25,6 +25,10 @@
       body { background: #fff !important; color: #111 !important; }
       .no-print { display: none !important; }
       th { background: #f3f4f6 !important; }
+      @page { margin: 1.2cm; }
+      a[href]:after { content: none !important; }
+      /* Remove browser-injected URL from print footer */
+      html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     }
   </style>
   <!-- Firebase SDK -->
@@ -59,12 +63,9 @@
     window._db = db;
     window._auth = auth;
     window._fs = { collection, doc, setDoc, onSnapshot, query, where, deleteDoc };
-
-    // Expose auth functions for React to use
     window._auth.signOut = () => signOut(auth);
     window._authFns = { createUserWithEmailAndPassword, signInWithEmailAndPassword, updateProfile };
 
-    // Notify React when auth state is known
     onAuthStateChanged(auth, (user) => {
       window._currentUser = user || null;
       window.dispatchEvent(new CustomEvent("auth-state-changed", { detail: { user } }));
@@ -74,27 +75,29 @@
 <body>
   <div id="root"></div>
   <script type="text/babel">
-    const { useState, useRef, useMemo } = React;
+    const { useState, useRef, useMemo, useEffect, useCallback } = React;
 
     // ── Utility ──────────────────────────────────────────────────────────────────
     const uid = () => Math.random().toString(36).slice(2, 9);
     const fmt = (val) => (val === null || val === undefined || val === "") ? "—" : String(val);
+    const fmtDate = (ts) => new Date(ts).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
     const countByField = (rows, field) => {
       const counts = {};
       rows.forEach((r) => { const v = fmt(r[field]); counts[v] = (counts[v] || 0) + 1; });
       return counts;
     };
-    const relativeTime = (ts) => {
-      const diff = Date.now() - ts;
-      const mins = Math.floor(diff / 60000);
-      const hrs = Math.floor(diff / 3600000);
-      const days = Math.floor(diff / 86400000);
-      if (mins < 2) return "just now";
-      if (mins < 60) return `${mins}m ago`;
-      if (hrs < 24) return `${hrs}h ago`;
-      if (days === 1) return "yesterday";
-      if (days < 7) return `${days}d ago`;
-      return new Date(ts).toLocaleDateString();
+
+    // Fuzzy string similarity (Dice coefficient)
+    const normalize = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const bigrams = (s) => { const b = new Set(); for (let i = 0; i < s.length - 1; i++) b.add(s.slice(i, i + 2)); return b; };
+    const similarity = (a, b) => {
+      const na = normalize(a); const nb = normalize(b);
+      if (!na || !nb) return 0;
+      if (na === nb) return 1;
+      const ba = bigrams(na); const bb = bigrams(nb);
+      let intersect = 0;
+      ba.forEach((g) => { if (bb.has(g)) intersect++; });
+      return (2 * intersect) / (ba.size + bb.size);
     };
 
     // ── Theme ────────────────────────────────────────────────────────────────────
@@ -104,6 +107,7 @@
       text: "#111827", textSecondary: "#374151", muted: "#6b7280", mutedLight: "#9ca3af",
       success: "#16a34a", successBg: "#f0fdf4", warning: "#d97706", warningBg: "#fffbeb",
       danger: "#dc2626", dangerBg: "#fef2f2", accent: "#2563eb", accentBg: "#eff4ff",
+      purple: "#7c3aed", purpleBg: "#f5f3ff",
     };
 
     const TAG_PALETTE = [
@@ -126,12 +130,17 @@
         ghost: { background: "transparent", color: T.muted, border: `1px solid ${T.border}` },
         danger: { background: T.dangerBg, color: T.danger, border: "1px solid #fca5a5" },
         outline: { background: "transparent", color: T.navy, border: `1px solid ${T.border}` },
+        purple: { background: T.purpleBg, color: T.purple, border: `1px solid #ddd6fe` },
       };
       return <button style={{ ...base, ...variants[variant], ...style }} onClick={onClick} disabled={disabled}>{children}</button>;
     };
 
     const StatusTag = ({ children, color }) => {
-      const presets = { blue: { bg: T.accentBg, text: T.blue }, green: { bg: T.successBg, text: T.success }, amber: { bg: T.warningBg, text: T.warning }, red: { bg: T.dangerBg, text: T.danger }, gray: { bg: "#f3f4f6", text: T.muted } };
+      const presets = {
+        blue: { bg: T.accentBg, text: T.blue }, green: { bg: T.successBg, text: T.success },
+        amber: { bg: T.warningBg, text: T.warning }, red: { bg: T.dangerBg, text: T.danger },
+        gray: { bg: "#f3f4f6", text: T.muted }, purple: { bg: T.purpleBg, text: T.purple },
+      };
       const p = presets[color] || presets.gray;
       return <span style={{ display: "inline-flex", alignItems: "center", padding: "2px 8px", borderRadius: 20, fontSize: 11, fontWeight: 600, background: p.bg, color: p.text, letterSpacing: "0.03em", textTransform: "uppercase" }}>{children}</span>;
     };
@@ -151,8 +160,8 @@
       <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: T.muted, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>{children}</label>
     );
 
-    const Input = ({ value, onChange, placeholder, style, onKeyDown }) => (
-      <input value={value} onChange={onChange} placeholder={placeholder} onKeyDown={onKeyDown}
+    const Input = ({ value, onChange, placeholder, style, onKeyDown, type = "text" }) => (
+      <input type={type} value={value} onChange={onChange} placeholder={placeholder} onKeyDown={onKeyDown}
         style={{ background: "#fff", border: `1px solid ${T.border}`, borderRadius: 6, color: T.text, fontFamily: "'Inter', sans-serif", fontSize: 13, padding: "8px 12px", outline: "none", width: "100%", transition: "border-color 0.13s", ...style }}
         onFocus={(e) => (e.target.style.borderColor = T.blue)}
         onBlur={(e) => (e.target.style.borderColor = T.border)}
@@ -190,7 +199,6 @@
       };
       const removeTag = (t) => onChange(tags.filter((x) => x !== t));
       const suggestions = allTags.filter((t) => !tags.includes(t) && (input.length === 0 || t.includes(input.toLowerCase())));
-
       return (
         <div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
@@ -229,7 +237,6 @@
       const [dragging, setDragging] = useState(false);
       const [error, setError] = useState(null);
       const fileRef = useRef();
-
       const parse = (file) => {
         setError(null);
         const reader = new FileReader();
@@ -258,7 +265,6 @@
         };
         reader.readAsBinaryString(file);
       };
-
       return (
         <div>
           <div onDragOver={(e) => { e.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)}
@@ -274,7 +280,7 @@
             <div style={{ marginTop: 12, background: T.dangerBg, border: `1px solid #fca5a5`, borderRadius: 8, padding: "14px 16px" }}>
               <div style={{ fontWeight: 600, color: T.danger, fontSize: 13, marginBottom: 6 }}>⚠ Upload rejected — header mismatch</div>
               <pre style={{ color: "#991b1b", fontSize: 12, whiteSpace: "pre-wrap", fontFamily: "'IBM Plex Mono', monospace", lineHeight: 1.8 }}>{error}</pre>
-              <p style={{ color: "#991b1b", fontSize: 12, marginTop: 8 }}>Adjust your spreadsheet headers to match those listed above the upload zone, then try again.</p>
+              <p style={{ color: "#991b1b", fontSize: 12, marginTop: 8 }}>Adjust your spreadsheet headers to match those listed above, then try again.</p>
             </div>
           )}
         </div>
@@ -294,15 +300,24 @@
       const [widgets, setWidgets] = useState(project.template?.widgets || []);
       const [reportTitle, setReportTitle] = useState(project.template?.reportTitle || `${project.name} — Pipeline Report`);
       const columns = project.uploads[0] ? Object.keys(project.uploads[0].rows[0] || {}) : [];
+
       const addWidget = () => setWidgets([...widgets, { id: uid(), type: "stat_card", label: "", field: columns[0] || "", statMode: "count" }]);
       const updateWidget = (id, changes) => setWidgets(widgets.map((w) => (w.id === id ? { ...w, ...changes } : w)));
       const removeWidget = (id) => setWidgets(widgets.filter((w) => w.id !== id));
+      const duplicateWidget = (id) => {
+        const idx = widgets.findIndex((w) => w.id === id);
+        const copy = { ...widgets[idx], id: uid(), label: widgets[idx].label ? `${widgets[idx].label} (copy)` : "" };
+        const next = [...widgets];
+        next.splice(idx + 1, 0, copy);
+        setWidgets(next);
+      };
       const moveWidget = (id, dir) => {
         const idx = widgets.findIndex((w) => w.id === id);
         const next = [...widgets]; const target = idx + dir;
         if (target < 0 || target >= next.length) return;
         [next[idx], next[target]] = [next[target], next[idx]]; setWidgets(next);
       };
+
       return (
         <div>
           <SectionTitle sub="Configure the sections that will appear in your generated reports.">Template Builder</SectionTitle>
@@ -369,11 +384,21 @@
                           style={{ background: "#fff", border: `1px solid ${T.border}`, borderRadius: 6, color: T.text, fontFamily: "'Inter', sans-serif", fontSize: 13, padding: "8px 12px", width: "100%", minHeight: 80, resize: "vertical", outline: "none" }} />
                       </div>
                     )}
+                    {w.type === "delta_table" && (
+                      <div style={{ flex: 2, minWidth: 200, display: "flex", alignItems: "center", gap: 10, marginTop: 20 }}>
+                        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 12, color: T.textSecondary, padding: "8px 12px", background: T.purpleBg, borderRadius: 8, border: `1px solid #ddd6fe` }}>
+                          <input type="checkbox" checked={!!w.aiSummary}
+                            onChange={(e) => updateWidget(w.id, { aiSummary: e.target.checked })} />
+                          <span>✦ Include AI summary of changes</span>
+                        </label>
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 4, paddingTop: 20 }}>
                   <Btn small variant="ghost" onClick={() => moveWidget(w.id, -1)} disabled={i === 0}>↑</Btn>
                   <Btn small variant="ghost" onClick={() => moveWidget(w.id, 1)} disabled={i === widgets.length - 1}>↓</Btn>
+                  <Btn small variant="ghost" onClick={() => duplicateWidget(w.id)} style={{ fontSize: 11 }}>⧉</Btn>
                   <Btn small variant="danger" onClick={() => removeWidget(w.id)}>✕</Btn>
                 </div>
               </div>
@@ -430,7 +455,68 @@
       </div>
     );
 
-    const DeltaTable = ({ prevRows, currRows, columns }) => {
+    // ── AI Delta Summary ──────────────────────────────────────────────────────────
+    const AIDeltaSummary = ({ changes, idCol }) => {
+      const [summary, setSummary] = useState(null);
+      const [loading, setLoading] = useState(false);
+
+      const generateSummary = async () => {
+        setLoading(true);
+        const added = changes.filter((c) => c.type === "added").map((c) => c.id);
+        const removed = changes.filter((c) => c.type === "removed").map((c) => c.id);
+        const changed = changes.filter((c) => c.type === "changed");
+        const changedIds = [...new Set(changed.map((c) => c.id))];
+        const prompt = `You are analyzing a pipeline tracking delta report for a private equity deal origination search.
+
+Delta summary:
+- Added targets (${added.length}): ${added.slice(0, 10).join(", ")}${added.length > 10 ? ` and ${added.length - 10} more` : ""}
+- Removed targets (${removed.length}): ${removed.slice(0, 10).join(", ")}${removed.length > 10 ? ` and ${removed.length - 10} more` : ""}
+- Updated records (${changedIds.length} companies): ${changedIds.slice(0, 8).join(", ")}${changedIds.length > 8 ? ` and ${changedIds.length - 8} more` : ""}
+${changed.slice(0, 15).map((c) => `  • ${c.id}: ${c.col} changed from "${c.from}" to "${c.to}"`).join("\n")}
+
+Write a concise one-paragraph executive summary of these pipeline changes. Focus on the most notable shifts, what they signal about the search's progress, and any patterns in the updates. Be direct and professional. Do not use bullet points.`;
+
+        try {
+          const res = await fetch("https://api.anthropic.com/v1/messages", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: "claude-sonnet-4-20250514",
+              max_tokens: 300,
+              messages: [{ role: "user", content: prompt }],
+            }),
+          });
+          const data = await res.json();
+          setSummary(data.content?.[0]?.text || "Unable to generate summary.");
+        } catch (e) {
+          setSummary("Summary unavailable — API error.");
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      useEffect(() => { generateSummary(); }, []);
+
+      if (loading) return (
+        <div style={{ background: T.purpleBg, border: `1px solid #ddd6fe`, borderRadius: 8, padding: "14px 16px", marginBottom: 20, display: "flex", alignItems: "center", gap: 10, color: T.purple, fontSize: 13 }}>
+          <span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>✦</span> Generating AI summary…
+          <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
+        </div>
+      );
+
+      if (!summary) return null;
+
+      return (
+        <div style={{ background: T.purpleBg, border: `1px solid #ddd6fe`, borderRadius: 8, padding: "14px 16px", marginBottom: 20 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: T.purple, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+            <span>✦</span> AI Summary
+          </div>
+          <p style={{ color: "#3b0764", fontSize: 13, lineHeight: 1.75 }}>{summary}</p>
+        </div>
+      );
+    };
+
+    const DeltaTable = ({ prevRows, currRows, columns, showAISummary }) => {
       const idCol = columns[0];
       const prevMap = {}; prevRows.forEach((r) => { prevMap[r[idCol]] = r; });
       const currMap = {}; currRows.forEach((r) => { currMap[r[idCol]] = r; });
@@ -448,6 +534,7 @@
       const changed = changes.filter((c) => c.type === "changed");
       return (
         <div>
+          {showAISummary && <AIDeltaSummary changes={changes} idCol={idCol} />}
           <div style={{ display: "flex", gap: 14, marginBottom: 24, flexWrap: "wrap" }}>
             <StatCard label="Added" value={added.length} sub="New targets" />
             <StatCard label="Removed" value={removed.length} sub="Dropped targets" />
@@ -485,7 +572,9 @@
           }
           case "breakdown_table": return <BreakdownTable counts={countByField(rows, widget.field)} />;
           case "pipeline_table": return <PipelineTable rows={rows} cols={widget.selectedCols || cols} />;
-          case "delta_table": return prevUpload ? <DeltaTable prevRows={prevUpload.rows} currRows={rows} columns={cols} /> : <p style={{ color: T.muted, fontSize: 13 }}>No prior upload available for comparison.</p>;
+          case "delta_table": return prevUpload
+            ? <DeltaTable prevRows={prevUpload.rows} currRows={rows} columns={cols} showAISummary={!!widget.aiSummary} />
+            : <p style={{ color: T.muted, fontSize: 13 }}>No prior upload available for comparison.</p>;
           case "text_block": return <p style={{ color: T.textSecondary, lineHeight: 1.8, whiteSpace: "pre-wrap", fontSize: 14 }}>{widget.text || "—"}</p>;
           default: return null;
         }
@@ -517,7 +606,7 @@
           <div className="no-print" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24 }}>
             <div>
               <h2 style={{ fontSize: 20, fontWeight: 700, color: T.navy, letterSpacing: "-0.02em" }}>{template.reportTitle}</h2>
-              <p style={{ color: T.muted, fontSize: 12, marginTop: 4 }}>{upload?.filename} · {upload?.rows.length} targets · {new Date(upload?.uploadedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</p>
+              <p style={{ color: T.muted, fontSize: 12, marginTop: 4 }}>{upload?.filename} · {upload?.rows.length} targets · {fmtDate(upload?.uploadedAt)}</p>
             </div>
             <Btn onClick={() => window.print()} variant="blue">⬇ Export PDF</Btn>
           </div>
@@ -543,14 +632,20 @@
 
       return (
         <div>
-          <div style={{ display: "flex", alignItems: "flex-start", gap: 14, marginBottom: 28 }}>
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 14, marginBottom: 20 }}>
             <button onClick={onBack} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 6, color: T.muted, cursor: "pointer", fontSize: 16, width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 3 }}>←</button>
             <div style={{ flex: 1 }}>
               <h1 style={{ fontSize: 22, fontWeight: 700, color: T.navy, letterSpacing: "-0.02em" }}>{project.name}</h1>
               <p style={{ color: T.muted, fontSize: 12, marginTop: 2 }}>
-                {project.uploads.length} upload{project.uploads.length !== 1 ? "s" : ""} · Created {new Date(project.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
-                {project.updatedAt && ` · Updated ${new Date(project.updatedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`}
+                {project.uploads.length} upload{project.uploads.length !== 1 ? "s" : ""} · Created {fmtDate(project.createdAt)}
+                {project.updatedAt && ` · Updated ${fmtDate(project.updatedAt)}`}
               </p>
+              {/* Tags displayed inline under header */}
+              {(project.tags || []).length > 0 && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 8 }}>
+                  {(project.tags || []).map((t) => <TagChip key={t} tag={t} allTags={allTags} />)}
+                </div>
+              )}
               <div style={{ marginTop: 12 }}>
                 <TagEditor tags={project.tags || []} allTags={allTags} onChange={handleTagsChange} />
               </div>
@@ -584,7 +679,7 @@
                     <div style={{ width: 36, height: 36, borderRadius: 6, background: T.accentBg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }}>📄</div>
                     <div>
                       <div style={{ fontWeight: 600, color: T.text, fontSize: 13 }}>{u.filename}</div>
-                      <div style={{ color: T.muted, fontSize: 12, marginTop: 1 }}>{u.rows.length} rows · {Object.keys(u.rows[0] || {}).length} columns · {new Date(u.uploadedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</div>
+                      <div style={{ color: T.muted, fontSize: 12, marginTop: 1 }}>{u.rows.length} rows · {Object.keys(u.rows[0] || {}).length} columns · {fmtDate(u.uploadedAt)}</div>
                     </div>
                   </div>
                   <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -612,7 +707,7 @@
                     <div className="no-print" style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 24, padding: "14px 18px", background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8 }}>
                       <span style={{ color: T.muted, fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em" }}>Viewing</span>
                       <Select value={selectedUploadIdx} onChange={(e) => setSelectedUploadIdx(Number(e.target.value))}>
-                        {project.uploads.map((u, i) => <option key={u.id} value={i}>{u.filename} — {new Date(u.uploadedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</option>)}
+                        {project.uploads.map((u, i) => <option key={u.id} value={i}>{u.filename} — {fmtDate(u.uploadedAt)}</option>)}
                       </Select>
                     </div>
                   )}
@@ -620,6 +715,170 @@
                 </div>
               )
           )}
+        </div>
+      );
+    };
+
+    // ── Conflict Check ────────────────────────────────────────────────────────────
+    const CONFLICT_THRESHOLD = 0.72;
+    const HIGH_THRESHOLD = 0.88;
+
+    const ConflictCheck = ({ projects, onClose }) => {
+      const [rows, setRows] = useState(null);
+      const [filename, setFilename] = useState("");
+      const [results, setResults] = useState(null);
+      const [companyCol, setCompanyCol] = useState("");
+      const fileRef = useRef();
+
+      // Build flat index of all companies across all projects
+      const companyIndex = useMemo(() => {
+        const idx = [];
+        projects.forEach((proj) => {
+          proj.uploads.forEach((upload) => {
+            if (!upload.rows?.length) return;
+            const cols = Object.keys(upload.rows[0]);
+            // Auto-detect name column heuristic
+            const nameCol = cols.find((c) => /company|name|target|firm|issuer|account/i.test(c)) || cols[0];
+            upload.rows.forEach((row) => {
+              const name = String(row[nameCol] || "").trim();
+              if (name) idx.push({ name, projectName: proj.name, projectId: proj.id, col: nameCol, row });
+            });
+          });
+        });
+        return idx;
+      }, [projects]);
+
+      const columns = rows ? Object.keys(rows[0] || {}) : [];
+
+      const handleParsed = (data, fname) => {
+        setRows(data);
+        setFilename(fname);
+        setResults(null);
+        const cols = Object.keys(data[0] || {});
+        const auto = cols.find((c) => /company|name|target|firm|issuer|account/i.test(c)) || cols[0];
+        setCompanyCol(auto || "");
+      };
+
+      const runCheck = () => {
+        if (!rows || !companyCol) return;
+        const checked = rows.map((row) => {
+          const name = String(row[companyCol] || "").trim();
+          if (!name) return { row, name: "", conflicts: [] };
+          const conflicts = companyIndex
+            .map((entry) => ({ ...entry, score: similarity(name, entry.name) }))
+            .filter((e) => e.score >= CONFLICT_THRESHOLD)
+            .sort((a, b) => b.score - a.score)
+            .slice(0, 3);
+          return { row, name, conflicts };
+        });
+        setResults(checked);
+      };
+
+      const flagged = results ? results.filter((r) => r.conflicts.length > 0) : [];
+      const clean = results ? results.filter((r) => r.conflicts.length === 0 && r.name) : [];
+
+      return (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(15,32,68,0.5)", zIndex: 500, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "40px 20px", overflowY: "auto" }}>
+          <div style={{ background: "#fff", borderRadius: 14, width: "100%", maxWidth: 860, boxShadow: "0 24px 64px rgba(0,0,0,0.18)" }}>
+            {/* Header */}
+            <div style={{ padding: "20px 28px", borderBottom: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 16 }}>⚡</span>
+                  <h2 style={{ fontSize: 17, fontWeight: 700, color: T.navy }}>Conflict Check</h2>
+                </div>
+                <p style={{ color: T.muted, fontSize: 12, marginTop: 3 }}>Upload a target list to identify companies already tracked across your projects</p>
+              </div>
+              <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: T.muted, fontSize: 22, lineHeight: 1 }}>×</button>
+            </div>
+
+            <div style={{ padding: 28 }}>
+              {/* Upload */}
+              {!rows ? (
+                <div>
+                  <p style={{ color: T.textSecondary, fontSize: 13, marginBottom: 16, lineHeight: 1.7 }}>
+                    Upload a target list to check whether any companies already appear in your existing projects. Uses fuzzy matching so variations in company name format are still caught.
+                  </p>
+                  <UploadZone onParsed={handleParsed} label="Upload target list to check for conflicts" />
+                </div>
+              ) : (
+                <div>
+                  {/* Config row */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 20, padding: "14px 16px", background: T.bg, borderRadius: 8, border: `1px solid ${T.border}` }}>
+                    <div style={{ fontSize: 13, color: T.muted }}>📄 <strong style={{ color: T.text }}>{filename}</strong> — {rows.length} rows</div>
+                    <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
+                      <span style={{ fontSize: 12, color: T.muted, fontWeight: 500 }}>Company name column:</span>
+                      <Select value={companyCol} onChange={(e) => { setCompanyCol(e.target.value); setResults(null); }} style={{ fontSize: 12 }}>
+                        {columns.map((c) => <option key={c} value={c}>{c}</option>)}
+                      </Select>
+                      <Btn onClick={runCheck} variant="primary">Run Check</Btn>
+                      <Btn variant="ghost" onClick={() => { setRows(null); setResults(null); }} small>Clear</Btn>
+                    </div>
+                  </div>
+
+                  {/* Results */}
+                  {results && (
+                    <div>
+                      {/* Summary bar */}
+                      <div style={{ display: "flex", gap: 14, marginBottom: 24, flexWrap: "wrap" }}>
+                        <StatCard label="Checked" value={results.filter(r => r.name).length} sub="Companies in list" />
+                        <StatCard label="Conflicts" value={flagged.length} sub="Potential matches found" />
+                        <StatCard label="Clear" value={clean.length} sub="No matches found" />
+                      </div>
+
+                      {flagged.length === 0 && (
+                        <div style={{ textAlign: "center", padding: "36px 0", background: T.successBg, border: `1px solid #bbf7d0`, borderRadius: 10, color: T.success, marginBottom: 20 }}>
+                          <div style={{ fontSize: 28, marginBottom: 8 }}>✓</div>
+                          <p style={{ fontWeight: 600 }}>No conflicts detected</p>
+                          <p style={{ fontSize: 12, marginTop: 4, color: "#166534" }}>None of the companies in your list match existing targets in your projects.</p>
+                        </div>
+                      )}
+
+                      {flagged.length > 0 && (
+                        <div>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: T.danger, marginBottom: 12, display: "flex", alignItems: "center", gap: 6 }}>
+                            ⚠ {flagged.length} potential conflict{flagged.length !== 1 ? "s" : ""} found
+                          </div>
+                          {flagged.map((item, i) => (
+                            <div key={i} style={{ marginBottom: 12, background: "#fff", border: `1px solid ${T.border}`, borderRadius: 10, overflow: "hidden" }}>
+                              <div style={{ padding: "12px 16px", background: T.warningBg, borderBottom: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                <span style={{ fontWeight: 600, color: T.text, fontSize: 14 }}>{item.name}</span>
+                                <StatusTag color={item.conflicts[0].score >= HIGH_THRESHOLD ? "red" : "amber"}>
+                                  {item.conflicts[0].score >= HIGH_THRESHOLD ? "High likelihood" : "Possible match"}
+                                </StatusTag>
+                              </div>
+                              {item.conflicts.map((c, j) => (
+                                <div key={j} style={{ padding: "12px 16px", borderBottom: j < item.conflicts.length - 1 ? `1px solid ${T.borderLight}` : "none", display: "flex", gap: 20, flexWrap: "wrap" }}>
+                                  <div style={{ flex: 1 }}>
+                                    <div style={{ fontSize: 11, fontWeight: 600, color: T.muted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 3 }}>Matched as</div>
+                                    <div style={{ fontSize: 13, color: T.navy, fontWeight: 600 }}>{c.name}</div>
+                                  </div>
+                                  <div style={{ flex: 1 }}>
+                                    <div style={{ fontSize: 11, fontWeight: 600, color: T.muted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 3 }}>Project</div>
+                                    <div style={{ fontSize: 13, color: T.text }}>{c.projectName}</div>
+                                  </div>
+                                  <div>
+                                    <div style={{ fontSize: 11, fontWeight: 600, color: T.muted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 3 }}>Similarity</div>
+                                    <div style={{ fontSize: 13, fontFamily: "'IBM Plex Mono', monospace", color: c.score >= HIGH_THRESHOLD ? T.danger : T.warning, fontWeight: 600 }}>{Math.round(c.score * 100)}%</div>
+                                  </div>
+                                  <div style={{ flex: 2 }}>
+                                    <div style={{ fontSize: 11, fontWeight: 600, color: T.muted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 3 }}>Record snapshot</div>
+                                    <div style={{ fontSize: 11, color: T.muted, fontFamily: "'IBM Plex Mono', monospace", lineHeight: 1.6 }}>
+                                      {Object.entries(c.row).slice(0, 4).map(([k, v]) => <span key={k} style={{ marginRight: 12 }}><strong>{k}:</strong> {fmt(v)}</span>)}
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       );
     };
@@ -647,7 +906,6 @@
               <h2 style={{ fontSize: 20, fontWeight: 700, color: T.navy, letterSpacing: "-0.02em" }}>Projects</h2>
               <p style={{ color: T.muted, fontSize: 13, marginTop: 4 }}>Manage your active deal origination searches and pipeline tracking projects.</p>
             </div>
-
           </div>
 
           {/* Tag filter bar */}
@@ -691,28 +949,24 @@
                   <h3 style={{ fontSize: 15, color: T.navy, fontWeight: 700, lineHeight: 1.3, flex: 1, marginRight: 8 }}>{p.name}</h3>
                   {p.uploads.length > 0 && <StatusTag color="gray">{p.uploads.length} upload{p.uploads.length !== 1 ? "s" : ""}</StatusTag>}
                 </div>
-
                 {(p.tags || []).length > 0 && (
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 10 }}>
                     {(p.tags || []).map((t) => <TagChip key={t} tag={t} allTags={allTags} style={{ fontSize: 10, padding: "2px 8px" }} />)}
                   </div>
                 )}
-
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, marginTop: 4 }}>
-                  <span style={{ color: T.mutedLight }}>Created {new Date(p.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>
+                  <span style={{ color: T.mutedLight }}>Created {fmtDate(p.createdAt)}</span>
                   <span style={{ color: T.muted, fontWeight: 500 }}>
                     {p.updatedAt || p.uploads.length > 0
-                      ? `Updated ${new Date(p.updatedAt || p.uploads[p.uploads.length - 1]?.uploadedAt || p.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`
+                      ? `Updated ${fmtDate(p.updatedAt || p.uploads[p.uploads.length - 1]?.uploadedAt || p.createdAt)}`
                       : ""}
                   </span>
                 </div>
-
                 {p.uploads.length > 0 && (
                   <p style={{ color: T.muted, fontSize: 12, marginTop: 3 }}>
                     {p.uploads[p.uploads.length - 1].rows.length} targets · {p.uploads[p.uploads.length - 1].filename}
                   </p>
                 )}
-
                 {p.template?.widgets?.length > 0 && <div style={{ marginTop: 10 }}><StatusTag color="blue">Template configured</StatusTag></div>}
               </div>
             ))}
@@ -737,8 +991,8 @@
     };
 
     // ── Auth Screen ───────────────────────────────────────────────────────────────
-    const AuthScreen = ({ onAuth }) => {
-      const [mode, setMode] = useState("login"); // "login" | "signup"
+    const AuthScreen = () => {
+      const [mode, setMode] = useState("login");
       const [name, setName] = useState("");
       const [email, setEmail] = useState("");
       const [password, setPassword] = useState("");
@@ -767,50 +1021,41 @@
             "auth/invalid-credential": "Incorrect email or password.",
             "auth/weak-password": "Password must be at least 6 characters.",
             "auth/too-many-requests": "Too many attempts. Please try again later.",
+            "auth/operation-not-allowed": "Email/password sign-in is not enabled. Go to Firebase Console → Authentication → Sign-in method → Email/Password and enable it.",
+            "auth/network-request-failed": "Network error. Check your connection and try again.",
+            "auth/internal-error": "Firebase internal error. Check the browser console for details.",
           };
-          setError(msgs[e.code] || "Something went wrong. Please try again.");
-        } finally {
-          setLoading(false);
-        }
+          setError(msgs[e.code] || `Error (${e.code || "unknown"}): ${e.message || "Something went wrong."}`);
+        } finally { setLoading(false); }
       };
 
       return (
         <div style={{ minHeight: "100vh", background: T.bg, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
           <div style={{ width: "100%", maxWidth: 400 }}>
-            {/* Logo */}
             <div style={{ textAlign: "center", marginBottom: 40 }}>
               <div style={{ width: 48, height: 48, borderRadius: 12, background: T.navy, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 20, color: "#fff", fontWeight: 700, fontFamily: "'Inter', sans-serif", letterSpacing: "-0.02em", marginBottom: 16 }}>BS</div>
               <div style={{ fontSize: 22, fontWeight: 700, color: T.navy, letterSpacing: "-0.02em" }}>BuySight</div>
               <div style={{ fontSize: 12, color: T.muted, marginTop: 4, letterSpacing: "0.04em" }}>Pipeline Tracker</div>
             </div>
-
             <div style={{ background: "#fff", border: `1px solid ${T.border}`, borderRadius: 14, padding: 32, boxShadow: "0 4px 24px rgba(15,32,68,0.07)" }}>
-              {/* Tab toggle */}
               <div style={{ display: "flex", background: T.bg, borderRadius: 8, padding: 4, marginBottom: 28 }}>
                 {["login", "signup"].map((m) => (
                   <button key={m} onClick={() => { setMode(m); setError(null); }}
-                    style={{ flex: 1, padding: "7px 0", borderRadius: 6, border: "none", cursor: "pointer", fontFamily: "'Inter', sans-serif", fontSize: 13, fontWeight: 600, transition: "all 0.15s",
-                      background: mode === m ? "#fff" : "transparent",
-                      color: mode === m ? T.navy : T.muted,
-                      boxShadow: mode === m ? "0 1px 4px rgba(0,0,0,0.08)" : "none" }}>
+                    style={{ flex: 1, padding: "7px 0", borderRadius: 6, border: "none", cursor: "pointer", fontFamily: "'Inter', sans-serif", fontSize: 13, fontWeight: 600, transition: "all 0.15s", background: mode === m ? "#fff" : "transparent", color: mode === m ? T.navy : T.muted, boxShadow: mode === m ? "0 1px 4px rgba(0,0,0,0.08)" : "none" }}>
                     {m === "login" ? "Sign In" : "Create Account"}
                   </button>
                 ))}
               </div>
-
               {mode === "signup" && (
                 <div style={{ marginBottom: 16 }}>
                   <FieldLabel>Full Name</FieldLabel>
                   <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Jane Smith" />
                 </div>
               )}
-
               <div style={{ marginBottom: 16 }}>
                 <FieldLabel>Email</FieldLabel>
-                <Input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@firm.com"
-                  onKeyDown={(e) => e.key === "Enter" && handleSubmit()} />
+                <Input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@firm.com" onKeyDown={(e) => e.key === "Enter" && handleSubmit()} />
               </div>
-
               <div style={{ marginBottom: 24 }}>
                 <FieldLabel>Password</FieldLabel>
                 <input type="password" value={password} onChange={(e) => setPassword(e.target.value)}
@@ -821,22 +1066,15 @@
                   onBlur={(e) => e.target.style.borderColor = T.border}
                 />
               </div>
-
               {error && (
-                <div style={{ background: T.dangerBg, border: "1px solid #fca5a5", borderRadius: 8, padding: "10px 14px", marginBottom: 18, color: T.danger, fontSize: 13 }}>
-                  {error}
-                </div>
+                <div style={{ background: T.dangerBg, border: "1px solid #fca5a5", borderRadius: 8, padding: "10px 14px", marginBottom: 18, color: T.danger, fontSize: 13 }}>{error}</div>
               )}
-
               <button onClick={handleSubmit} disabled={loading}
                 style={{ width: "100%", padding: "10px 0", borderRadius: 8, border: "none", background: loading ? "#94a3b8" : T.navy, color: "#fff", fontFamily: "'Inter', sans-serif", fontSize: 14, fontWeight: 600, cursor: loading ? "not-allowed" : "pointer", transition: "background 0.15s" }}>
                 {loading ? "Please wait…" : mode === "login" ? "Sign In" : "Create Account"}
               </button>
             </div>
-
-            <p style={{ textAlign: "center", fontSize: 12, color: T.mutedLight, marginTop: 20 }}>
-              Your projects are private and tied to your account.
-            </p>
+            <p style={{ textAlign: "center", fontSize: 12, color: T.mutedLight, marginTop: 20 }}>Your projects are private and tied to your account.</p>
           </div>
         </div>
       );
@@ -844,10 +1082,11 @@
 
     // ── App Shell ─────────────────────────────────────────────────────────────────
     function App() {
-      const [user, setUser] = useState(undefined); // undefined = loading, null = logged out
+      const [user, setUser] = useState(undefined);
       const [projects, setProjects] = useState([]);
       const [activeProjectId, setActiveProjectId] = useState(null);
-      const projectsUnsub = React.useRef(null);
+      const [showConflict, setShowConflict] = useState(false);
+      const projectsUnsub = useRef(null);
       const activeProject = projects.find((p) => p.id === activeProjectId);
 
       const allTags = useMemo(() => {
@@ -856,8 +1095,7 @@
         return Array.from(set).sort();
       }, [projects]);
 
-      // Wire auth helpers onto window._auth for AuthScreen to use
-      React.useEffect(() => {
+      useEffect(() => {
         const wireAuth = () => {
           const { createUserWithEmailAndPassword, signInWithEmailAndPassword, updateProfile } = window._authFns;
           window._auth._createUser = (email, pw) => createUserWithEmailAndPassword(window._auth, email, pw);
@@ -865,31 +1103,23 @@
           window._auth._updateProfile = (u, data) => updateProfile(u, data);
         };
         if (window._authFns) wireAuth();
-        // Auth fns are set in the module script below
       }, []);
 
-      // Listen for auth state changes
-      React.useEffect(() => {
+      useEffect(() => {
         const handler = (e) => {
           const { user: u } = e.detail;
           setUser(u);
           if (!u) {
-            // Logged out — clear projects and unsubscribe
             if (projectsUnsub.current) { projectsUnsub.current(); projectsUnsub.current = null; }
-            setProjects([]);
-            setActiveProjectId(null);
+            setProjects([]); setActiveProjectId(null);
           }
         };
         window.addEventListener("auth-state-changed", handler);
-        // If already resolved (fast load), check immediately
-        if (window._currentUser !== undefined) {
-          setUser(window._currentUser);
-        }
+        if (window._currentUser !== undefined) setUser(window._currentUser);
         return () => window.removeEventListener("auth-state-changed", handler);
       }, []);
 
-      // Load user's projects when they log in
-      React.useEffect(() => {
+      useEffect(() => {
         if (!user) return;
         const { collection, query, where, onSnapshot } = window._fs;
         if (projectsUnsub.current) projectsUnsub.current();
@@ -922,7 +1152,6 @@
         await window._auth.signOut();
       };
 
-      // ── Loading splash ────────────────────────────────────────────────────────
       if (user === undefined) {
         return (
           <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: T.bg }}>
@@ -934,23 +1163,39 @@
         );
       }
 
-      // ── Auth gate ─────────────────────────────────────────────────────────────
       if (!user) return <AuthScreen />;
 
-      // ── Main app ──────────────────────────────────────────────────────────────
       return (
         <div>
+          {showConflict && <ConflictCheck projects={projects} onClose={() => setShowConflict(false)} />}
+
+          {/* Top nav */}
           <div className="no-print" style={{ borderBottom: `1px solid ${T.border}`, padding: "0 32px", display: "flex", alignItems: "center", gap: 12, height: 54, background: "#fff", position: "sticky", top: 0, zIndex: 100, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
             <button onClick={() => setActiveProjectId(null)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 9, padding: 0 }}>
               <div style={{ width: 28, height: 28, borderRadius: 6, background: T.navy, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, color: "#fff", fontWeight: 700, fontFamily: "'Inter', sans-serif", letterSpacing: "-0.02em" }}>BS</div>
               <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 15, color: T.navy, fontWeight: 700, letterSpacing: "-0.02em" }}>BuySight</span>
             </button>
             <span style={{ color: T.border, fontSize: 16, margin: "0 2px" }}>|</span>
-            <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: T.muted }}>Pipeline Tracker</span>
+            {/* Nav tools */}
+            <button onClick={() => { setActiveProjectId(null); }}
+              style={{ background: "none", border: "none", cursor: "pointer", fontSize: 12, fontFamily: "'Inter', sans-serif", fontWeight: 500, color: !activeProject && !showConflict ? T.navy : T.muted, padding: "4px 8px", borderRadius: 6, transition: "color 0.13s" }}>
+              Projects
+            </button>
+            <button onClick={() => { setShowConflict(true); }}
+              style={{ display: "flex", alignItems: "center", gap: 5, background: "none", border: `1px solid ${T.border}`, cursor: "pointer", fontSize: 12, fontFamily: "'Inter', sans-serif", fontWeight: 500, color: T.muted, padding: "4px 12px", borderRadius: 6, transition: "all 0.13s" }}
+              onMouseEnter={(e) => { e.currentTarget.style.borderColor = T.navy; e.currentTarget.style.color = T.navy; }}
+              onMouseLeave={(e) => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = T.muted; }}>
+              ⚡ Conflict Check
+            </button>
             {activeProject && (
               <React.Fragment>
                 <span style={{ color: T.mutedLight, margin: "0 2px" }}>›</span>
                 <span style={{ color: T.textSecondary, fontSize: 13, fontWeight: 500 }}>{activeProject.name}</span>
+                {(activeProject.tags || []).length > 0 && (
+                  <div style={{ display: "flex", gap: 4 }}>
+                    {(activeProject.tags || []).map((t) => <TagChip key={t} tag={t} allTags={allTags} style={{ fontSize: 10, padding: "1px 7px" }} />)}
+                  </div>
+                )}
               </React.Fragment>
             )}
             <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 16 }}>
