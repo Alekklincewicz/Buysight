@@ -31,7 +31,15 @@
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
     import { getAnalytics } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-analytics.js";
-    import { getFirestore, collection, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+    import {
+      getFirestore, collection, doc, setDoc, onSnapshot, query, where, deleteDoc
+    } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+    import {
+      getAuth, onAuthStateChanged,
+      createUserWithEmailAndPassword,
+      signInWithEmailAndPassword,
+      signOut, updateProfile
+    } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
 
     const firebaseConfig = {
       apiKey: "AIzaSyB50EBPiytFIvt3bBFKJlkWeBd2Q86cYd0",
@@ -46,10 +54,21 @@
     const app = initializeApp(firebaseConfig);
     const analytics = getAnalytics(app);
     const db = getFirestore(app);
+    const auth = getAuth(app);
 
     window._db = db;
-    window._fs = { collection, doc, setDoc, onSnapshot };
-    window.dispatchEvent(new Event("firebase-ready"));
+    window._auth = auth;
+    window._fs = { collection, doc, setDoc, onSnapshot, query, where, deleteDoc };
+
+    // Expose auth functions for React to use
+    window._auth.signOut = () => signOut(auth);
+    window._authFns = { createUserWithEmailAndPassword, signInWithEmailAndPassword, updateProfile };
+
+    // Notify React when auth state is known
+    onAuthStateChanged(auth, (user) => {
+      window._currentUser = user || null;
+      window.dispatchEvent(new CustomEvent("auth-state-changed", { detail: { user } }));
+    });
   </script>
 </head>
 <body>
@@ -717,10 +736,118 @@
       );
     };
 
+    // ── Auth Screen ───────────────────────────────────────────────────────────────
+    const AuthScreen = ({ onAuth }) => {
+      const [mode, setMode] = useState("login"); // "login" | "signup"
+      const [name, setName] = useState("");
+      const [email, setEmail] = useState("");
+      const [password, setPassword] = useState("");
+      const [error, setError] = useState(null);
+      const [loading, setLoading] = useState(false);
+
+      const handleSubmit = async () => {
+        setError(null);
+        if (!email.trim() || !password.trim()) { setError("Email and password are required."); return; }
+        if (mode === "signup" && !name.trim()) { setError("Please enter your name."); return; }
+        if (password.length < 6) { setError("Password must be at least 6 characters."); return; }
+        setLoading(true);
+        try {
+          if (mode === "signup") {
+            const cred = await window._auth._createUser(email, password);
+            await window._auth._updateProfile(cred.user, { displayName: name.trim() });
+          } else {
+            await window._auth._signIn(email, password);
+          }
+        } catch (e) {
+          const msgs = {
+            "auth/email-already-in-use": "An account with this email already exists.",
+            "auth/invalid-email": "Invalid email address.",
+            "auth/user-not-found": "No account found with this email.",
+            "auth/wrong-password": "Incorrect password.",
+            "auth/invalid-credential": "Incorrect email or password.",
+            "auth/weak-password": "Password must be at least 6 characters.",
+            "auth/too-many-requests": "Too many attempts. Please try again later.",
+          };
+          setError(msgs[e.code] || "Something went wrong. Please try again.");
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      return (
+        <div style={{ minHeight: "100vh", background: T.bg, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div style={{ width: "100%", maxWidth: 400 }}>
+            {/* Logo */}
+            <div style={{ textAlign: "center", marginBottom: 40 }}>
+              <div style={{ width: 48, height: 48, borderRadius: 12, background: T.navy, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 20, color: "#fff", fontWeight: 700, fontFamily: "'Inter', sans-serif", letterSpacing: "-0.02em", marginBottom: 16 }}>BS</div>
+              <div style={{ fontSize: 22, fontWeight: 700, color: T.navy, letterSpacing: "-0.02em" }}>BuySight</div>
+              <div style={{ fontSize: 12, color: T.muted, marginTop: 4, letterSpacing: "0.04em" }}>Pipeline Tracker</div>
+            </div>
+
+            <div style={{ background: "#fff", border: `1px solid ${T.border}`, borderRadius: 14, padding: 32, boxShadow: "0 4px 24px rgba(15,32,68,0.07)" }}>
+              {/* Tab toggle */}
+              <div style={{ display: "flex", background: T.bg, borderRadius: 8, padding: 4, marginBottom: 28 }}>
+                {["login", "signup"].map((m) => (
+                  <button key={m} onClick={() => { setMode(m); setError(null); }}
+                    style={{ flex: 1, padding: "7px 0", borderRadius: 6, border: "none", cursor: "pointer", fontFamily: "'Inter', sans-serif", fontSize: 13, fontWeight: 600, transition: "all 0.15s",
+                      background: mode === m ? "#fff" : "transparent",
+                      color: mode === m ? T.navy : T.muted,
+                      boxShadow: mode === m ? "0 1px 4px rgba(0,0,0,0.08)" : "none" }}>
+                    {m === "login" ? "Sign In" : "Create Account"}
+                  </button>
+                ))}
+              </div>
+
+              {mode === "signup" && (
+                <div style={{ marginBottom: 16 }}>
+                  <FieldLabel>Full Name</FieldLabel>
+                  <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Jane Smith" />
+                </div>
+              )}
+
+              <div style={{ marginBottom: 16 }}>
+                <FieldLabel>Email</FieldLabel>
+                <Input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@firm.com"
+                  onKeyDown={(e) => e.key === "Enter" && handleSubmit()} />
+              </div>
+
+              <div style={{ marginBottom: 24 }}>
+                <FieldLabel>Password</FieldLabel>
+                <input type="password" value={password} onChange={(e) => setPassword(e.target.value)}
+                  placeholder={mode === "signup" ? "Min. 6 characters" : "••••••••"}
+                  onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+                  style={{ background: "#fff", border: `1px solid ${T.border}`, borderRadius: 6, color: T.text, fontFamily: "'Inter', sans-serif", fontSize: 13, padding: "8px 12px", outline: "none", width: "100%", transition: "border-color 0.13s" }}
+                  onFocus={(e) => e.target.style.borderColor = T.blue}
+                  onBlur={(e) => e.target.style.borderColor = T.border}
+                />
+              </div>
+
+              {error && (
+                <div style={{ background: T.dangerBg, border: "1px solid #fca5a5", borderRadius: 8, padding: "10px 14px", marginBottom: 18, color: T.danger, fontSize: 13 }}>
+                  {error}
+                </div>
+              )}
+
+              <button onClick={handleSubmit} disabled={loading}
+                style={{ width: "100%", padding: "10px 0", borderRadius: 8, border: "none", background: loading ? "#94a3b8" : T.navy, color: "#fff", fontFamily: "'Inter', sans-serif", fontSize: 14, fontWeight: 600, cursor: loading ? "not-allowed" : "pointer", transition: "background 0.15s" }}>
+                {loading ? "Please wait…" : mode === "login" ? "Sign In" : "Create Account"}
+              </button>
+            </div>
+
+            <p style={{ textAlign: "center", fontSize: 12, color: T.mutedLight, marginTop: 20 }}>
+              Your projects are private and tied to your account.
+            </p>
+          </div>
+        </div>
+      );
+    };
+
     // ── App Shell ─────────────────────────────────────────────────────────────────
     function App() {
+      const [user, setUser] = useState(undefined); // undefined = loading, null = logged out
       const [projects, setProjects] = useState([]);
       const [activeProjectId, setActiveProjectId] = useState(null);
+      const projectsUnsub = React.useRef(null);
       const activeProject = projects.find((p) => p.id === activeProjectId);
 
       const allTags = useMemo(() => {
@@ -729,39 +856,88 @@
         return Array.from(set).sort();
       }, [projects]);
 
-
-      // Load projects from Firestore on mount
+      // Wire auth helpers onto window._auth for AuthScreen to use
       React.useEffect(() => {
-        const init = () => {
-          const { collection, onSnapshot } = window._fs;
-          onSnapshot(collection(window._db, "projects"), (snap) => {
-            setProjects(snap.docs.map(d => d.data()));
-          });
+        const wireAuth = () => {
+          const { createUserWithEmailAndPassword, signInWithEmailAndPassword, updateProfile } = window._authFns;
+          window._auth._createUser = (email, pw) => createUserWithEmailAndPassword(window._auth, email, pw);
+          window._auth._signIn = (email, pw) => signInWithEmailAndPassword(window._auth, email, pw);
+          window._auth._updateProfile = (u, data) => updateProfile(u, data);
         };
-        if (window._db) init();
-        else window.addEventListener("firebase-ready", init, { once: true });
+        if (window._authFns) wireAuth();
+        // Auth fns are set in the module script below
       }, []);
-      const createProject = async (name, tags = []) => {
-        const p = { id: uid(), name, tags, createdAt: Date.now(), updatedAt: Date.now(), uploads: [], template: null };
-        setProjects(prev => [...prev, p]);
-        setActiveProjectId(p.id);
-        if (window._db) {
-          const { doc, setDoc } = window._fs;
-          try {
-            await setDoc(doc(window._db, "projects", p.id), JSON.parse(JSON.stringify(p)));
-          } catch (e) { console.error("Firestore create error:", e); }
+
+      // Listen for auth state changes
+      React.useEffect(() => {
+        const handler = (e) => {
+          const { user: u } = e.detail;
+          setUser(u);
+          if (!u) {
+            // Logged out — clear projects and unsubscribe
+            if (projectsUnsub.current) { projectsUnsub.current(); projectsUnsub.current = null; }
+            setProjects([]);
+            setActiveProjectId(null);
+          }
+        };
+        window.addEventListener("auth-state-changed", handler);
+        // If already resolved (fast load), check immediately
+        if (window._currentUser !== undefined) {
+          setUser(window._currentUser);
         }
+        return () => window.removeEventListener("auth-state-changed", handler);
+      }, []);
+
+      // Load user's projects when they log in
+      React.useEffect(() => {
+        if (!user) return;
+        const { collection, query, where, onSnapshot } = window._fs;
+        if (projectsUnsub.current) projectsUnsub.current();
+        projectsUnsub.current = onSnapshot(
+          query(collection(window._db, "projects"), where("uid", "==", user.uid)),
+          (snap) => setProjects(snap.docs.map(d => d.data()))
+        );
+        return () => { if (projectsUnsub.current) projectsUnsub.current(); };
+      }, [user?.uid]);
+
+      const createProject = async (name, tags = []) => {
+        if (!user) return;
+        const p = { id: uid(), uid: user.uid, name, tags, createdAt: Date.now(), updatedAt: Date.now(), uploads: [], template: null };
+        setActiveProjectId(p.id);
+        const { doc, setDoc } = window._fs;
+        try { await setDoc(doc(window._db, "projects", p.id), JSON.parse(JSON.stringify(p))); }
+        catch (e) { console.error("Firestore create error:", e); }
       };
+
       const updateProject = async (updated) => {
         setProjects(prev => prev.map((p) => (p.id === updated.id ? updated : p)));
-        if (window._db) {
-          const { doc, setDoc } = window._fs;
-          try {
-            await setDoc(doc(window._db, "projects", updated.id), JSON.parse(JSON.stringify(updated)));
-          } catch (e) { console.error("Firestore save error:", e); }
-        }
+        const { doc, setDoc } = window._fs;
+        try { await setDoc(doc(window._db, "projects", updated.id), JSON.parse(JSON.stringify(updated))); }
+        catch (e) { console.error("Firestore save error:", e); }
       };
 
+      const handleSignOut = async () => {
+        if (projectsUnsub.current) { projectsUnsub.current(); projectsUnsub.current = null; }
+        setProjects([]); setActiveProjectId(null);
+        await window._auth.signOut();
+      };
+
+      // ── Loading splash ────────────────────────────────────────────────────────
+      if (user === undefined) {
+        return (
+          <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: T.bg }}>
+            <div style={{ textAlign: "center" }}>
+              <div style={{ width: 48, height: 48, borderRadius: 12, background: T.navy, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 20, color: "#fff", fontWeight: 700, fontFamily: "'Inter', sans-serif", marginBottom: 16 }}>BS</div>
+              <div style={{ color: T.muted, fontSize: 13 }}>Loading…</div>
+            </div>
+          </div>
+        );
+      }
+
+      // ── Auth gate ─────────────────────────────────────────────────────────────
+      if (!user) return <AuthScreen />;
+
+      // ── Main app ──────────────────────────────────────────────────────────────
       return (
         <div>
           <div className="no-print" style={{ borderBottom: `1px solid ${T.border}`, padding: "0 32px", display: "flex", alignItems: "center", gap: 12, height: 54, background: "#fff", position: "sticky", top: 0, zIndex: 100, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
@@ -777,8 +953,22 @@
                 <span style={{ color: T.textSecondary, fontSize: 13, fontWeight: 500 }}>{activeProject.name}</span>
               </React.Fragment>
             )}
-            <div style={{ marginLeft: "auto" }}>
+            <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 16 }}>
               <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: T.mutedLight }}>{projects.length} project{projects.length !== 1 ? "s" : ""}</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ width: 28, height: 28, borderRadius: "50%", background: T.accentBg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, color: T.blue, fontWeight: 700, flexShrink: 0 }}>
+                  {(user.displayName || user.email || "?")[0].toUpperCase()}
+                </div>
+                <span style={{ fontSize: 12, color: T.muted, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {user.displayName || user.email}
+                </span>
+                <button onClick={handleSignOut}
+                  style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 6, padding: "4px 10px", cursor: "pointer", fontSize: 12, color: T.muted, fontFamily: "'Inter', sans-serif", fontWeight: 500, transition: "all 0.13s" }}
+                  onMouseEnter={(e) => { e.currentTarget.style.borderColor = T.danger; e.currentTarget.style.color = T.danger; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = T.muted; }}>
+                  Sign out
+                </button>
+              </div>
             </div>
           </div>
 
