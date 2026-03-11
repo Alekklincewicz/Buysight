@@ -456,45 +456,89 @@
       </div>
     );
 
+    // ── API Key Store (module-level, persists for session) ───────────────────────
+    let _apiKey = "";
+    const getApiKey = () => _apiKey;
+    const setApiKeyVal = (k) => { _apiKey = k.trim(); };
+
+    // ── API Key Prompt Modal ──────────────────────────────────────────────────────
+    const ApiKeyPrompt = ({ onKey, onCancel }) => {
+      const [val, setVal] = useState("");
+      return (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(15,32,68,0.55)", zIndex: 600, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div style={{ background: "#fff", borderRadius: 12, padding: 28, maxWidth: 420, width: "100%", boxShadow: "0 16px 48px rgba(0,0,0,0.18)" }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: T.navy, marginBottom: 8 }}>Enter Anthropic API Key</div>
+            <p style={{ fontSize: 13, color: T.muted, marginBottom: 16, lineHeight: 1.6 }}>
+              Your key is used only in this browser session to generate AI summaries. It is never stored or transmitted elsewhere.
+            </p>
+            <input
+              type="password"
+              value={val}
+              onChange={(e) => setVal(e.target.value)}
+              placeholder="sk-ant-..."
+              autoFocus
+              onKeyDown={(e) => { if (e.key === "Enter" && val.trim().startsWith("sk-")) onKey(val.trim()); }}
+              style={{ width: "100%", padding: "9px 12px", border: "1px solid " + T.border, borderRadius: 6, fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, marginBottom: 14, outline: "none" }}
+              onFocus={(e) => e.target.style.borderColor = T.blue}
+              onBlur={(e) => e.target.style.borderColor = T.border}
+            />
+            <div style={{ display: "flex", gap: 8 }}>
+              <Btn onClick={() => { if (val.trim().startsWith("sk-")) onKey(val.trim()); }} disabled={!val.trim().startsWith("sk-")}>Use Key</Btn>
+              <Btn variant="ghost" onClick={onCancel}>Cancel</Btn>
+            </div>
+            <p style={{ fontSize: 11, color: T.mutedLight, marginTop: 12 }}>Get your key at console.anthropic.com</p>
+          </div>
+        </div>
+      );
+    };
+
     // ── AI Delta Summary ──────────────────────────────────────────────────────────
     const AIDeltaSummary = ({ changes, idCol }) => {
       const [summary, setSummary] = useState(null);
       const [loading, setLoading] = useState(false);
+      const [needKey, setNeedKey] = useState(false);
+      const [error, setError] = useState(null);
 
-      const generateSummary = async () => {
-        setLoading(true);
+      const generateSummary = async (key) => {
+        const apiKey = key || getApiKey();
+        if (!apiKey) { setNeedKey(true); return; }
+        setLoading(true); setNeedKey(false); setError(null);
         const added = changes.filter((c) => c.type === "added").map((c) => c.id);
         const removed = changes.filter((c) => c.type === "removed").map((c) => c.id);
         const changed = changes.filter((c) => c.type === "changed");
         const changedIds = [...new Set(changed.map((c) => c.id))];
-        const prompt = `You are analyzing a pipeline tracking delta report for a private equity deal origination search.
-
-Delta summary:
-- Added targets (${added.length}): ${added.slice(0, 10).join(", ")}${added.length > 10 ? ` and ${added.length - 10} more` : ""}
-- Removed targets (${removed.length}): ${removed.slice(0, 10).join(", ")}${removed.length > 10 ? ` and ${removed.length - 10} more` : ""}
-- Updated records (${changedIds.length} companies): ${changedIds.slice(0, 8).join(", ")}${changedIds.length > 8 ? ` and ${changedIds.length - 8} more` : ""}
-${changed.slice(0, 15).map((c) => `  • ${c.id}: ${c.col} changed from "${c.from}" to "${c.to}"`).join("\n")}
-
-Write a concise one-paragraph executive summary of these pipeline changes. Focus on the most notable shifts, what they signal about the search's progress, and any patterns in the updates. Be direct and professional. Do not use bullet points.`;
+        const lines = changed.slice(0, 15).map((c) => "  - " + c.id + ": " + c.col + " changed from [" + c.from + "] to [" + c.to + "]").join("\n");
+        const prompt = "You are analyzing a pipeline tracking delta report for a private equity deal origination search.\n\nDelta summary:\n- Added targets (" + added.length + "): " + added.slice(0,10).join(", ") + (added.length > 10 ? " and " + (added.length-10) + " more" : "") + "\n- Removed targets (" + removed.length + "): " + removed.slice(0,10).join(", ") + (removed.length > 10 ? " and " + (removed.length-10) + " more" : "") + "\n- Updated records (" + changedIds.length + " companies): " + changedIds.slice(0,8).join(", ") + (changedIds.length > 8 ? " and " + (changedIds.length-8) + " more" : "") + "\n" + lines + "\n\nWrite a concise one-paragraph executive summary of these pipeline changes. Focus on the most notable shifts, what they signal about the search progress, and any patterns. Be direct and professional. No bullet points.";
 
         try {
           const res = await fetch("https://api.anthropic.com/v1/messages", {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
+              "x-api-key": apiKey,
               "anthropic-version": "2023-06-01",
               "anthropic-dangerous-direct-browser-access": "true",
             },
             body: JSON.stringify({
-              model: "claude-sonnet-4-20250514",
-              max_tokens: 300,
+              model: "claude-haiku-4-5-20251001",
+              max_tokens: 350,
               messages: [{ role: "user", content: prompt }],
             }),
           });
           const data = await res.json();
-          setSummary(data.content?.[0]?.text || "Unable to generate summary.");
+          if (data.error) {
+            if (data.error.type === "authentication_error") {
+              setApiKeyVal("");
+              setError("Invalid API key.");
+              setNeedKey(true);
+            } else {
+              setError("API error: " + data.error.message);
+            }
+          } else {
+            setSummary(data.content && data.content[0] ? data.content[0].text : "Unable to generate summary.");
+          }
         } catch (e) {
-          setSummary("Summary unavailable — API error.");
+          setError("Network error — check your connection and try again.");
         } finally {
           setLoading(false);
         }
@@ -502,17 +546,31 @@ Write a concise one-paragraph executive summary of these pipeline changes. Focus
 
       useEffect(() => { generateSummary(); }, []);
 
+      if (needKey) return (
+        <ApiKeyPrompt
+          onKey={(k) => { setApiKeyVal(k); generateSummary(k); }}
+          onCancel={() => { setNeedKey(false); setError("API key required to generate summary."); }}
+        />
+      );
+
       if (loading) return (
-        <div style={{ background: T.purpleBg, border: `1px solid #ddd6fe`, borderRadius: 8, padding: "14px 16px", marginBottom: 20, display: "flex", alignItems: "center", gap: 10, color: T.purple, fontSize: 13 }}>
+        <div style={{ background: T.purpleBg, border: "1px solid #ddd6fe", borderRadius: 8, padding: "14px 16px", marginBottom: 20, display: "flex", alignItems: "center", gap: 10, color: T.purple, fontSize: 13 }}>
           <span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>✦</span> Generating AI summary…
           <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
+        </div>
+      );
+
+      if (error && !summary) return (
+        <div style={{ background: T.warningBg, border: "1px solid #fcd34d", borderRadius: 8, padding: "12px 16px", marginBottom: 20, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span style={{ fontSize: 13, color: T.warning }}>{error}</span>
+          <Btn small variant="ghost" onClick={() => { setError(null); generateSummary(); }}>Retry</Btn>
         </div>
       );
 
       if (!summary) return null;
 
       return (
-        <div style={{ background: T.purpleBg, border: `1px solid #ddd6fe`, borderRadius: 8, padding: "14px 16px", marginBottom: 20 }}>
+        <div style={{ background: T.purpleBg, border: "1px solid #ddd6fe", borderRadius: 8, padding: "14px 16px", marginBottom: 20 }}>
           <div style={{ fontSize: 11, fontWeight: 600, color: T.purple, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
             <span>✦</span> AI Summary
           </div>
@@ -521,7 +579,7 @@ Write a concise one-paragraph executive summary of these pipeline changes. Focus
       );
     };
 
-    const DeltaTable = ({ prevRows, currRows, columns, showAISummary }) => {
+        const DeltaTable = ({ prevRows, currRows, columns, showAISummary }) => {
       const idCol = columns[0];
       const prevMap = {}; prevRows.forEach((r) => { prevMap[r[idCol]] = r; });
       const currMap = {}; currRows.forEach((r) => { currMap[r[idCol]] = r; });
@@ -972,7 +1030,33 @@ Write a concise one-paragraph executive summary of these pipeline changes. Focus
                     {p.uploads[p.uploads.length - 1].rows.length} targets · {p.uploads[p.uploads.length - 1].filename}
                   </p>
                 )}
-                {p.template?.widgets?.length > 0 && <div style={{ marginTop: 10 }}><StatusTag color="blue">Template configured</StatusTag></div>}
+                {p.template?.widgets?.length > 0 && (
+                  <div style={{ marginTop: 10, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <StatusTag color="blue">Template configured</StatusTag>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const latest = p.uploads.length > 0 ? p.uploads[p.uploads.length - 1] : null;
+                        const exportData = {
+                          project: p.name,
+                          exportedAt: new Date().toISOString(),
+                          template: p.template,
+                          latestUpload: latest ? { filename: latest.filename, uploadedAt: latest.uploadedAt, rowCount: latest.rows.length } : null,
+                        };
+                        const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: "application/json" });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement("a");
+                        a.href = url; a.download = p.name.replace(/[^a-z0-9]/gi, "_") + "_template.json"; a.click();
+                        URL.revokeObjectURL(url);
+                      }}
+                      style={{ background: "none", border: "1px solid " + T.border, borderRadius: 5, padding: "3px 9px", cursor: "pointer", fontSize: 11, color: T.muted, fontFamily: "'Inter', sans-serif", fontWeight: 500, display: "flex", alignItems: "center", gap: 4 }}
+                      onMouseEnter={(e) => { e.currentTarget.style.borderColor = T.navy; e.currentTarget.style.color = T.navy; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = T.muted; }}
+                      title="Download template configuration">
+                      ⬇ Template
+                    </button>
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -1137,7 +1221,9 @@ Write a concise one-paragraph executive summary of these pipeline changes. Focus
 
       const createProject = async (name, tags = []) => {
         if (!user) return;
-        const p = { id: uid(), uid: user.uid, name, tags, createdAt: Date.now(), updatedAt: Date.now(), uploads: [], template: null };
+        const p = { id: uid(), uid: user.uid, name, tags: tags || [], createdAt: Date.now(), updatedAt: Date.now(), uploads: [], template: null };
+        // Optimistically add to local state so tags are immediately visible
+        setProjects(prev => [...prev, p]);
         setActiveProjectId(p.id);
         const { doc, setDoc } = window._fs;
         try { await setDoc(doc(window._db, "projects", p.id), JSON.parse(JSON.stringify(p))); }
@@ -1152,9 +1238,12 @@ Write a concise one-paragraph executive summary of these pipeline changes. Focus
       };
 
       const handleSignOut = async () => {
+        // Data is continuously synced to Firestore via onSnapshot/setDoc - nothing to flush
+        // Unsubscribe listener first, then sign out
         if (projectsUnsub.current) { projectsUnsub.current(); projectsUnsub.current = null; }
-        setProjects([]); setActiveProjectId(null);
-        await window._auth.signOut();
+        try { await window._auth.signOut(); } catch (e) { console.error("Sign out error:", e); }
+        // Clear local state after Firebase confirms sign-out (auth state handler will also do this)
+        setProjects([]); setActiveProjectId(null); setShowConflict(false);
       };
 
       if (user === undefined) {
