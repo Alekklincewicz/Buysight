@@ -65,6 +65,7 @@
     window._fs = { collection, doc, setDoc, onSnapshot, query, where, deleteDoc };
     window._auth.signOut = () => signOut(auth);
     window._authFns = { createUserWithEmailAndPassword, signInWithEmailAndPassword, updateProfile };
+    window._onAuthStateChanged = (cb) => onAuthStateChanged(auth, cb);
 
     onAuthStateChanged(auth, (user) => {
       window._currentUser = user || null;
@@ -1195,17 +1196,30 @@
       }, []);
 
       useEffect(() => {
-        const handler = (e) => {
-          const { user: u } = e.detail;
-          setUser(u);
-          if (!u) {
-            if (projectsUnsub.current) { projectsUnsub.current(); projectsUnsub.current = null; }
-            setProjects([]); setActiveProjectId(null);
+        // Use onAuthStateChanged directly — most reliable source of truth for auth state
+        const trySubscribe = () => {
+          if (window._onAuthStateChanged) {
+            const unsub = window._onAuthStateChanged((u) => {
+              setUser(u || null);
+              if (!u) {
+                if (projectsUnsub.current) { projectsUnsub.current(); projectsUnsub.current = null; }
+                setProjects([]); setActiveProjectId(null); setShowConflict(false);
+              }
+            });
+            return unsub;
           }
+          return null;
         };
-        window.addEventListener("auth-state-changed", handler);
-        if (window._currentUser !== undefined) setUser(window._currentUser);
-        return () => window.removeEventListener("auth-state-changed", handler);
+        // Firebase module may not have loaded yet — poll briefly
+        let unsub = trySubscribe();
+        if (!unsub) {
+          const interval = setInterval(() => {
+            unsub = trySubscribe();
+            if (unsub) clearInterval(interval);
+          }, 50);
+          return () => { clearInterval(interval); if (unsub) unsub(); };
+        }
+        return () => { if (unsub) unsub(); };
       }, []);
 
       useEffect(() => {
@@ -1238,12 +1252,8 @@
       };
 
       const handleSignOut = async () => {
-        // Data is continuously synced to Firestore via onSnapshot/setDoc - nothing to flush
-        // Unsubscribe listener first, then sign out
-        if (projectsUnsub.current) { projectsUnsub.current(); projectsUnsub.current = null; }
         try { await window._auth.signOut(); } catch (e) { console.error("Sign out error:", e); }
-        // Clear local state after Firebase confirms sign-out (auth state handler will also do this)
-        setProjects([]); setActiveProjectId(null); setShowConflict(false);
+        // onAuthStateChanged will fire with null and clean up all state
       };
 
       if (user === undefined) {
