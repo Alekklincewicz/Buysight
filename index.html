@@ -119,7 +119,8 @@
       { bg: "#f0fdfa", text: "#0d9488", dot: "#0d9488" },
       { bg: "#fff7ed", text: "#ea580c", dot: "#ea580c" },
     ];
-    const tagColor = (tag, allTags) => TAG_PALETTE[Math.max(0, allTags.indexOf(tag)) % TAG_PALETTE.length];
+    const tagHash = (tag) => { let h = 0; for (let i = 0; i < tag.length; i++) h = (h * 31 + tag.charCodeAt(i)) >>> 0; return h % TAG_PALETTE.length; };
+    const tagColor = (tag, allTags) => TAG_PALETTE[tagHash(tag)];
 
     // ── Shared Components ────────────────────────────────────────────────────────
     const Btn = ({ children, onClick, variant = "primary", small, disabled, style }) => {
@@ -479,7 +480,11 @@ Write a concise one-paragraph executive summary of these pipeline changes. Focus
         try {
           const res = await fetch("https://api.anthropic.com/v1/messages", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              "anthropic-version": "2023-06-01",
+              "anthropic-dangerous-direct-browser-access": "true",
+            },
             body: JSON.stringify({
               model: "claude-sonnet-4-20250514",
               max_tokens: 300,
