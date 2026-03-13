@@ -494,11 +494,18 @@
     };
 
     // ── AI Delta Summary ──────────────────────────────────────────────────────────
-    const AIDeltaSummary = ({ changes, idCol }) => {
-      const [summary, setSummary] = useState(null);
+    const AIDeltaSummary = ({ changes, idCol, cachedSummary, onSave }) => {
+      // If cachedSummary exists, show it immediately — never call the API again
+      const [summary, setSummary] = useState(cachedSummary || null);
       const [loading, setLoading] = useState(false);
       const [needKey, setNeedKey] = useState(false);
       const [error, setError] = useState(null);
+      const generated = React.useRef(false);
+
+      // Sync if cachedSummary arrives after initial render (Firestore async)
+      useEffect(() => {
+        if (cachedSummary && !summary) setSummary(cachedSummary);
+      }, [cachedSummary]);
 
       const generateSummary = async (key) => {
         const apiKey = key || getApiKey();
@@ -536,7 +543,9 @@
               setError("API error: " + data.error.message);
             }
           } else {
-            setSummary(data.content && data.content[0] ? data.content[0].text : "Unable to generate summary.");
+            const text = data.content && data.content[0] ? data.content[0].text : "Unable to generate summary.";
+            setSummary(text);
+            if (onSave) onSave(text);
           }
         } catch (e) {
           setError("Network error — check your connection and try again.");
@@ -545,7 +554,12 @@
         }
       };
 
-      useEffect(() => { generateSummary(); }, []);
+      useEffect(() => {
+        if (cachedSummary) return;         // already saved — never regenerate
+        if (generated.current) return;     // already fired this session
+        generated.current = true;
+        generateSummary();
+      }, []);
 
       if (needKey) return (
         <ApiKeyPrompt
@@ -572,15 +586,16 @@
 
       return (
         <div style={{ background: T.purpleBg, border: "1px solid #ddd6fe", borderRadius: 8, padding: "14px 16px", marginBottom: 20 }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: T.purple, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
-            <span>✦</span> AI Summary
+          <div style={{ fontSize: 11, fontWeight: 600, color: T.purple, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 8, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}><span>✦</span> AI Summary</div>
+            {cachedSummary && <span style={{ fontSize: 10, fontWeight: 500, color: "#a78bfa", letterSpacing: "0.04em" }}>✓ saved</span>}
           </div>
           <p style={{ color: "#3b0764", fontSize: 13, lineHeight: 1.75 }}>{summary}</p>
         </div>
       );
     };
 
-        const DeltaTable = ({ prevRows, currRows, columns, showAISummary }) => {
+        const DeltaTable = ({ prevRows, currRows, columns, showAISummary, cachedSummary, onSaveSummary }) => {
       const idCol = columns[0];
       const prevMap = {}; prevRows.forEach((r) => { prevMap[r[idCol]] = r; });
       const currMap = {}; currRows.forEach((r) => { currMap[r[idCol]] = r; });
@@ -598,7 +613,7 @@
       const changed = changes.filter((c) => c.type === "changed");
       return (
         <div>
-          {showAISummary && <AIDeltaSummary changes={changes} idCol={idCol} />}
+          {showAISummary && <AIDeltaSummary changes={changes} idCol={idCol} cachedSummary={cachedSummary} onSave={onSaveSummary} />}
           <div style={{ display: "flex", gap: 14, marginBottom: 24, flexWrap: "wrap" }}>
             <StatCard label="Added" value={added.length} sub="New targets" />
             <StatCard label="Removed" value={removed.length} sub="Dropped targets" />
@@ -622,7 +637,7 @@
       );
     };
 
-    const ReportWidget = ({ widget, upload, prevUpload, allColumns }) => {
+    const ReportWidget = ({ widget, upload, prevUpload, allColumns, onWidgetUpdate }) => {
       const rows = upload.rows;
       const cols = allColumns || Object.keys(rows[0] || {});
       const renderContent = () => {
@@ -637,7 +652,9 @@
           case "breakdown_table": return <BreakdownTable counts={countByField(rows, widget.field)} />;
           case "pipeline_table": return <PipelineTable rows={rows} cols={widget.selectedCols || cols} />;
           case "delta_table": return prevUpload
-            ? <DeltaTable prevRows={prevUpload.rows} currRows={rows} columns={cols} showAISummary={!!widget.aiSummary} />
+            ? <DeltaTable prevRows={prevUpload.rows} currRows={rows} columns={cols} showAISummary={!!widget.aiSummary}
+                cachedSummary={widget.aiSummaryText || null}
+                onSaveSummary={(text) => onWidgetUpdate && onWidgetUpdate({ ...widget, aiSummaryText: text })} />
             : <p style={{ color: T.muted, fontSize: 13 }}>No prior upload available for comparison.</p>;
           case "text_block": return <p style={{ color: T.textSecondary, lineHeight: 1.8, whiteSpace: "pre-wrap", fontSize: 14 }}>{widget.text || "—"}</p>;
           default: return null;
@@ -651,7 +668,7 @@
       );
     };
 
-    const ReportView = ({ project, uploadIndex }) => {
+    const ReportView = ({ project, uploadIndex, onWidgetUpdate }) => {
       const upload = project.uploads[uploadIndex];
       const prevUpload = uploadIndex > 0 ? project.uploads[uploadIndex - 1] : null;
       const template = project.template;
@@ -674,7 +691,7 @@
             </div>
             <Btn onClick={() => window.print()} variant="blue">⬇ Export PDF</Btn>
           </div>
-          {template.widgets.map((w) => <ReportWidget key={w.id} widget={w} upload={upload} prevUpload={prevUpload} allColumns={allColumns} />)}
+          {template.widgets.map((w) => <ReportWidget key={w.id} widget={w} upload={upload} prevUpload={prevUpload} allColumns={allColumns} onWidgetUpdate={onWidgetUpdate} />)}
         </div>
       );
     };
@@ -775,7 +792,13 @@
                       </Select>
                     </div>
                   )}
-                  <ReportView project={project} uploadIndex={selectedUploadIdx} />
+                  <ReportView project={project} uploadIndex={selectedUploadIdx} onWidgetUpdate={(updatedWidget) => {
+                    const updatedTemplate = {
+                      ...project.template,
+                      widgets: project.template.widgets.map((w) => w.id === updatedWidget.id ? updatedWidget : w)
+                    };
+                    onUpdate({ ...project, template: updatedTemplate });
+                  }} />
                 </div>
               )
           )}
