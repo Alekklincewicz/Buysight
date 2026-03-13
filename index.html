@@ -82,25 +82,28 @@
     const uid = () => Math.random().toString(36).slice(2, 9);
     const fmt = (val) => (val === null || val === undefined || val === "") ? "—" : String(val);
 
-    // Excel serial date numbers (integer 30000–60000 covers ~1982–2064)
-    const isExcelDate = (v) => typeof v === "number" && Number.isInteger(v) && v > 30000 && v < 60000;
     const excelToDate = (serial) => {
-      // Excel epoch is Jan 0 1900; JS epoch is Jan 1 1970
-      // 25569 = days between 1900-01-01 and 1970-01-01 (accounting for Excel's leap year bug)
-      const ms = (serial - 25569) * 86400 * 1000;
+      const ms = (Number(serial) - 25569) * 86400 * 1000;
       return new Date(ms);
     };
-    // Detect ISO/US date strings like "2024-03-15", "3/15/2024", "Mar 15, 2024"
-    const DATE_RE = /^(\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/\d{2,4}|[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4})$/;
+    // Excel serial: integer or string of integer in range 30000–60000 (~1982–2064)
+    const isExcelSerial = (v) => {
+      if (v === null || v === undefined || v === "") return false;
+      const n = Number(v);
+      return !isNaN(n) && Number.isFinite(n) && n === Math.floor(n) && n > 30000 && n < 60000 && String(v).trim() === String(Math.floor(n));
+    };
+    // ISO/US date strings: "2024-03-15", "3/15/2024", "Mar 15, 2024"
+    const DATE_RE = /^(\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/\d{4}|[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4})$/;
+    const fmtDate_cell = (d) => d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
     const fmtCell = (val) => {
       if (val === null || val === undefined || val === "") return "—";
-      if (isExcelDate(val)) {
+      if (isExcelSerial(val)) {
         const d = excelToDate(val);
-        return isNaN(d) ? String(val) : d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+        return isNaN(d) ? String(val) : fmtDate_cell(d);
       }
       if (typeof val === "string" && DATE_RE.test(val.trim())) {
         const d = new Date(val.trim());
-        if (!isNaN(d)) return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+        if (!isNaN(d)) return fmtDate_cell(d);
       }
       return String(val);
     };
