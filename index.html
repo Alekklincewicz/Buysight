@@ -81,10 +81,33 @@
     // ── Utility ──────────────────────────────────────────────────────────────────
     const uid = () => Math.random().toString(36).slice(2, 9);
     const fmt = (val) => (val === null || val === undefined || val === "") ? "—" : String(val);
+
+    // Excel serial date numbers (integer 30000–60000 covers ~1982–2064)
+    const isExcelDate = (v) => typeof v === "number" && Number.isInteger(v) && v > 30000 && v < 60000;
+    const excelToDate = (serial) => {
+      // Excel epoch is Jan 0 1900; JS epoch is Jan 1 1970
+      // 25569 = days between 1900-01-01 and 1970-01-01 (accounting for Excel's leap year bug)
+      const ms = (serial - 25569) * 86400 * 1000;
+      return new Date(ms);
+    };
+    // Detect ISO/US date strings like "2024-03-15", "3/15/2024", "Mar 15, 2024"
+    const DATE_RE = /^(\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/\d{2,4}|[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4})$/;
+    const fmtCell = (val) => {
+      if (val === null || val === undefined || val === "") return "—";
+      if (isExcelDate(val)) {
+        const d = excelToDate(val);
+        return isNaN(d) ? String(val) : d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+      }
+      if (typeof val === "string" && DATE_RE.test(val.trim())) {
+        const d = new Date(val.trim());
+        if (!isNaN(d)) return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+      }
+      return String(val);
+    };
     const fmtDate = (ts) => new Date(ts).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
     const countByField = (rows, field) => {
       const counts = {};
-      rows.forEach((r) => { const v = fmt(r[field]); counts[v] = (counts[v] || 0) + 1; });
+      rows.forEach((r) => { const v = fmtCell(r[field]); counts[v] = (counts[v] || 0) + 1; });
       return counts;
     };
 
@@ -452,7 +475,7 @@
       <div style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead><tr>{cols.map((c) => <th key={c} style={thStyle}>{c}</th>)}</tr></thead>
-          <tbody>{rows.map((row, i) => (<tr key={i} style={{ background: i % 2 === 0 ? "#fff" : T.bg }}>{cols.map((c) => <td key={c} style={tdStyle}>{fmt(row[c])}</td>)}</tr>))}</tbody>
+          <tbody>{rows.map((row, i) => (<tr key={i} style={{ background: i % 2 === 0 ? "#fff" : T.bg }}>{cols.map((c) => <td key={c} style={tdStyle}>{fmtCell(row[c])}</td>)}</tr>))}</tbody>
         </table>
       </div>
     );
@@ -516,7 +539,7 @@
         const changed = changes.filter((c) => c.type === "changed");
         const changedIds = [...new Set(changed.map((c) => c.id))];
         const lines = changed.slice(0, 15).map((c) => "  - " + c.id + ": " + c.col + " changed from [" + c.from + "] to [" + c.to + "]").join("\n");
-        const prompt = "You are analyzing a pipeline tracking delta report for a private equity deal origination search.\n\nDelta summary:\n- Added targets (" + added.length + "): " + added.slice(0,10).join(", ") + (added.length > 10 ? " and " + (added.length-10) + " more" : "") + "\n- Removed targets (" + removed.length + "): " + removed.slice(0,10).join(", ") + (removed.length > 10 ? " and " + (removed.length-10) + " more" : "") + "\n- Updated records (" + changedIds.length + " companies): " + changedIds.slice(0,8).join(", ") + (changedIds.length > 8 ? " and " + (changedIds.length-8) + " more" : "") + "\n" + lines + "\n\nWrite a concise one-paragraph executive summary of these pipeline changes. Focus on the most notable shifts, what they signal about the search progress, and any patterns. Be direct and professional. No bullet points.";
+        const prompt = "You are a factual analyst summarizing a deal pipeline delta report. Report what changed — nothing more.\n\nData:\n- Added: " + added.length + " targets" + (added.length ? " (" + added.slice(0,8).join(", ") + (added.length > 8 ? "..." : "") + ")" : "") + "\n- Removed: " + removed.length + " targets" + (removed.length ? " (" + removed.slice(0,8).join(", ") + (removed.length > 8 ? "..." : "") + ")" : "") + "\n- Field updates across " + changedIds.length + " companies:\n" + lines + "\n\nWrite one factual paragraph describing what changed between these two uploads. State the counts, name specific companies where relevant, and note any patterns in the field-level changes (e.g. status shifts, ownership changes). Do not editorialize, assess quality, or use adjectives like strong/weak/promising/concerning. Plain declarative sentences only.";
 
         try {
           const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -627,8 +650,8 @@
                   <td style={{ ...tdStyle, fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: T.navy, fontWeight: 500 }}>{fmt(c.id)}</td>
                   <td style={tdStyle}><StatusTag color={c.type === "added" ? "green" : c.type === "removed" ? "red" : "amber"}>{c.type}</StatusTag></td>
                   <td style={{ ...tdStyle, color: T.muted }}>{c.col || "—"}</td>
-                  <td style={{ ...tdStyle, color: c.type === "changed" ? T.danger : T.mutedLight, textDecoration: c.type === "changed" ? "line-through" : "none" }}>{c.type === "changed" ? fmt(c.from) : "—"}</td>
-                  <td style={{ ...tdStyle, color: c.type === "removed" ? T.danger : T.success, fontWeight: 500 }}>{c.type === "changed" ? fmt(c.to) : c.type === "added" ? "New" : "Removed"}</td>
+                  <td style={{ ...tdStyle, color: c.type === "changed" ? T.danger : T.mutedLight, textDecoration: c.type === "changed" ? "line-through" : "none" }}>{c.type === "changed" ? fmtCell(c.from) : "—"}</td>
+                  <td style={{ ...tdStyle, color: c.type === "removed" ? T.danger : T.success, fontWeight: 500 }}>{c.type === "changed" ? fmtCell(c.to) : c.type === "added" ? "New" : "Removed"}</td>
                 </tr>
               ))}
             </tbody>
@@ -651,11 +674,19 @@
           }
           case "breakdown_table": return <BreakdownTable counts={countByField(rows, widget.field)} />;
           case "pipeline_table": return <PipelineTable rows={rows} cols={widget.selectedCols || cols} />;
-          case "delta_table": return prevUpload
-            ? <DeltaTable prevRows={prevUpload.rows} currRows={rows} columns={cols} showAISummary={!!widget.aiSummary}
-                cachedSummary={widget.aiSummaryText || null}
-                onSaveSummary={(text) => onWidgetUpdate && onWidgetUpdate({ ...widget, aiSummaryText: text })} />
-            : <p style={{ color: T.muted, fontSize: 13 }}>No prior upload available for comparison.</p>;
+          case "delta_table": {
+            if (!prevUpload) return <p style={{ color: T.muted, fontSize: 13 }}>No prior upload available for comparison.</p>;
+            // Cache is valid only if it was generated for this exact upload pair
+            const cacheObj = widget.aiSummaryCache || null;
+            const cacheValid = cacheObj && cacheObj.uploadId === upload.id && cacheObj.prevUploadId === prevUpload.id;
+            const cachedText = cacheValid ? cacheObj.text : null;
+            return <DeltaTable prevRows={prevUpload.rows} currRows={rows} columns={cols} showAISummary={!!widget.aiSummary}
+              cachedSummary={cachedText}
+              onSaveSummary={(text) => onWidgetUpdate && onWidgetUpdate({
+                ...widget,
+                aiSummaryCache: { uploadId: upload.id, prevUploadId: prevUpload.id, text }
+              })} />;
+          }
           case "text_block": return <p style={{ color: T.textSecondary, lineHeight: 1.8, whiteSpace: "pre-wrap", fontSize: 14 }}>{widget.text || "—"}</p>;
           default: return null;
         }
